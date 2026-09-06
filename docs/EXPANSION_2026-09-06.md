@@ -28,6 +28,14 @@ The repository workflow runs frozen dependencies, type checking, the complete te
 
 Match the workflow's commit with the live node's `hosting.release` and run `bun scripts/verify-deployment.ts --release <commit>` after deployment. The checker verifies site bytes, both nodes, current real collection, unavailable public feeds, redirects and denied private routes. A passing local suite alone does not establish hosted deployment acceptance.
 
+### Hosted acceptance
+
+Implementation revision `2647a1c2465f23fa17f7f6129c9bf289395acebc` deployed as Worker version `ed866ede-3391-4c5d-a94a-db68b0ac5d3c`. Its [exact-revision workflow](https://github.com/elizaOS/blackwell-index/actions/runs/34025407354) completed successfully: Linux type checking and 178 tests passed, with the one official-agent test deliberately executed by the separate 14-test Pyth job. The production image built and its API, restart, replay, encrypted backup, inspection and isolated restore smoke checks all passed.
+
+At 09:43 UTC, all 52 live deployment checks passed against that revision, including six exact asset hashes and 40 denied private routes. Both original production identities survived the upgrade. Each completed the expanded 64-observation collection with Oracle 4, Azure 38 and Verda 22, no source errors, zero shared observations and all 45 public values null. Each journal retained 11 collection/snapshot cycles and six distinct source responses at the subsequent status read. The hosted objects remained one operator group and Pyth remained `NOT_PUBLISHED`.
+
+A documentation-only follow-up may report a later commit through `hosting.release`; verify that exact deployed commit separately. These acceptance results do not complete the unresolved requirements below.
+
 ## Unresolved requirements
 
 The [launch checklist](LAUNCH_TODO.md) remains open: provider accounts and source rights, AWS GB300 metadata, independent operators, approved methodology and weights, Pyth publisher/feed admission, production signer and readback, hosted backup/export, offsite key custody and sustained real operating history. Do not present the new adapters as full-provider coverage or the development sites as a published oracle.
