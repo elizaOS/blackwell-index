@@ -19,7 +19,6 @@ function setText(id, value) { document.getElementById(id).textContent = value; }
 function qualified(feed) { return feed?.status === "READY" && typeof feed.price === "string" && /^\d+(?:\.\d{1,6})?$/.test(feed.price) && Number.isFinite(Number(feed.price)) && Number(feed.price) > 0 && Number.isSafeInteger(feed.observedAt) && feed.observedAt > 0; }
 function reason(feed) { return feed?.reasons?.map(value => REASONS[value] ?? value.toLowerCase().replaceAll("_", " ")).join("; ") || "No qualified price is available"; }
 function formatPrice(feed) { return qualified(feed) ? currency.format(Number(feed.price)) : "—"; }
-function setBadge(element, ready) { element.textContent = ready ? "Available" : "Unavailable"; element.dataset.state = ready ? "ready" : "unavailable"; }
 function timeLabel(timestamp) { return Number.isSafeInteger(timestamp) && timestamp > 0 ? dateFormat.format(timestamp) : "—"; }
 
 export function validateSnapshot(data) {
@@ -70,46 +69,47 @@ function renderProviders(feeds) {
     for (const model of MODELS) {
       const feed = matches.find(item => item.model === model); const cell = document.createElement("td"); cell.textContent = formatPrice(feed);
       if (qualified(feed)) { cell.title = `Observed ${timeLabel(feed.observedAt)}`; }
-      else { cell.className = "unavailable"; cell.title = reason(feed); const detail = document.createElement("span"); detail.className = "cell-detail"; detail.textContent = "Unavailable"; cell.append(detail); }
+      else { cell.className = "unavailable"; cell.title = reason(feed); cell.setAttribute("aria-label", `Unavailable: ${reason(feed)}`); }
       row.append(cell);
     }
     body.append(row);
   }
-  setText("provider-summary", `${available} of ${providers.length} providers with qualified prices`);
+  setText("provider-summary", `${available} / ${providers.length} available`);
 }
 
 function render(snapshot) {
   const composite = snapshot.feeds.find(feed => feed.kind === "COMPOSITE" && feed.id === "SBX");
-  setText("composite-price", formatPrice(composite)); setBadge(document.getElementById("composite-status"), qualified(composite));
-  setText("composite-reason", qualified(composite) ? `Oldest contributing observation: ${timeLabel(composite.observedAt)}` : reason(composite));
+  setText("composite-price", formatPrice(composite));
   renderWeights(composite);
   for (const model of MODELS) {
     const feed = snapshot.feeds.find(item => item.kind === "MODEL" && item.model === model); const card = document.querySelector(`[data-model="${model}"]`);
-    card.querySelector(".model-price").textContent = formatPrice(feed); setBadge(card.querySelector(".badge"), qualified(feed));
-    card.querySelector(".feed-reason").textContent = qualified(feed) ? `Observed ${timeLabel(feed.observedAt)}` : reason(feed);
+    card.querySelector(".model-price").textContent = formatPrice(feed);
+    card.querySelector(".model-price").setAttribute("aria-label", qualified(feed) ? `${formatPrice(feed)} per GPU-hour` : `Unavailable: ${reason(feed)}`);
   }
   renderProviders(snapshot.feeds);
   setText("calculated-at", timeLabel(snapshot.calculatedAt)); document.getElementById("calculated-at").dateTime = new Date(snapshot.calculatedAt).toISOString();
-  setText("methodology-version", snapshot.methodologyVersion); setText("benchmark-status", snapshot.publishable ? "Qualified for publication" : "Not ready for publication");
-  setText("connection-status", "Connected to node"); document.getElementById("connection-dot").dataset.state = "ready";
+  setText("methodology-version", snapshot.methodologyVersion); setText("benchmark-status", "Centralized demo · Not published to Pyth");
+  setText("connection-status", "");
 }
 
 function unavailable(message) {
   lastSnapshot = null;
-  setText("connection-status", message); document.getElementById("connection-dot").dataset.state = "error";
-  setText("composite-price", "—"); setBadge(document.getElementById("composite-status"), false); setText("composite-reason", "No current snapshot is available."); renderWeights(null);
-  for (const card of document.querySelectorAll("[data-model]")) { card.querySelector(".model-price").textContent = "—"; setBadge(card.querySelector(".badge"), false); card.querySelector(".feed-reason").textContent = "No current snapshot."; }
-  const body = document.getElementById("provider-rows"); body.replaceChildren(); const row = document.createElement("tr"); const cell = document.createElement("td"); cell.colSpan = 5; cell.className = "empty-state"; cell.textContent = "Provider status is unavailable. The page will retry automatically."; row.append(cell); body.append(row);
-  setText("provider-summary", "Source status unavailable"); setText("calculated-at", "—"); document.getElementById("calculated-at").removeAttribute("datetime"); setText("methodology-version", "—"); setText("benchmark-status", "Unavailable");
+  setText("connection-status", message);
+  setText("composite-price", "—"); renderWeights(null);
+  for (const card of document.querySelectorAll("[data-model]")) { card.querySelector(".model-price").textContent = "—"; card.querySelector(".model-price").setAttribute("aria-label", "Unavailable: no current snapshot"); }
+  const body = document.getElementById("provider-rows"); body.replaceChildren(); const row = document.createElement("tr"); const cell = document.createElement("td"); cell.colSpan = 5; cell.className = "empty-state"; cell.textContent = "Prices unavailable. Retrying automatically."; row.append(cell); body.append(row);
+  setText("provider-summary", ""); setText("calculated-at", "—"); document.getElementById("calculated-at").removeAttribute("datetime"); setText("methodology-version", "—"); setText("benchmark-status", "Unavailable");
 }
 
 async function refresh() {
   if (requestInFlight) return;
   requestInFlight = true;
   try {
-    const response = await fetch("/v1/feeds", { cache: "no-store", headers: { Accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
+    const response = await fetch("/v1/demo", { cache: "no-store", headers: { Accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
     if (!response.ok) throw new Error("Feed endpoint unavailable");
-    const snapshot = validateSnapshot(await response.json());
+    const payload = await response.json();
+    if (payload.mode !== "CENTRALIZED_DEMO" || payload.publishable !== false || payload.pythPublished !== false) throw new Error("Invalid demo response");
+    const snapshot = validateSnapshot(payload);
     render(snapshot); lastSnapshot = snapshot;
   } catch (error) { unavailable(error instanceof Error && error.message === "Snapshot is stale" ? "Snapshot expired" : "Node connection unavailable"); }
   finally { requestInFlight = false; }
