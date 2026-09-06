@@ -3,6 +3,7 @@ import { hash } from "../crypto";
 import type { Journal } from "../journal";
 import type { Snapshot } from "../types";
 import { preparePythPublication, PYTH_SYMBOLS_URL, submitToPythAgent, validatePythManifest, validatePythSymbols, type PythQueueReceipt } from "./index";
+import { PYTH_RECOVERY_LIMITS, PYTH_RUNTIME_SQL, verifyPythRuntimeState } from "./recovery-state";
 
 export interface PythRuntimeReport {
   status: "DISABLED" | "UNAVAILABLE" | "BUSY" | "NO_NEW_SOURCE_DATA" | "BLOCKED" | "QUEUED_LOCAL" | "DELIVERY_UNCONFIRMED";
@@ -53,17 +54,15 @@ export async function publishSnapshot(snapshot:Snapshot,manifest:unknown,journal
     if(!m.enabled)return {status:"DISABLED",feeds:[]};
     if(!snapshot.publishable)return {status:"UNAVAILABLE",feeds:[]};
     if(m.approval.status!=="APPROVED"||m.approval.expiresAt<=initialTime)throw new Error("Pyth publication needs current publisher and feed approval");
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS pyth_runtime_locks (id TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS pyth_submission_state (publisher TEXT NOT NULL, feed_id INTEGER NOT NULL, last_attempted_timestamp INTEGER NOT NULL, last_queued_timestamp INTEGER NOT NULL, last_attempt_id TEXT NOT NULL, last_status TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(publisher,feed_id));
-      CREATE TABLE IF NOT EXISTS pyth_queue_receipts (request_id TEXT PRIMARY KEY, snapshot_hash TEXT NOT NULL, queued_at INTEGER NOT NULL, feeds TEXT NOT NULL);
-    `);
+    verifyPythRuntimeState(db,initialTime);
+    db.exec(PYTH_RUNTIME_SQL);
     const publisher=hash({network:m.network,publisherPublicKey:m.approval.publisherPublicKey});
     lockId=publisher;owner=randomUUID();
     const leaseOwner=owner,leaseId=lockId;
     const acquired=db.transaction(()=>{
       const current=db.query("SELECT expires_at FROM pyth_runtime_locks WHERE id=?").get(leaseId) as {expires_at:number}|null;
       if(current&&current.expires_at>initialTime)return false;
+      if(!current&&(db.query("SELECT COUNT(*) AS count FROM pyth_runtime_locks").get() as {count:number}).count>=PYTH_RECOVERY_LIMITS.locks)throw new Error("Pyth runtime lock capacity requires review");
       db.query("INSERT INTO pyth_runtime_locks(id,owner,expires_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET owner=excluded.owner,expires_at=excluded.expires_at").run(leaseId,leaseOwner,initialTime+30_000);
       return true;
     })();
@@ -79,13 +78,15 @@ export async function publishSnapshot(snapshot:Snapshot,manifest:unknown,journal
         const previous=db.query("SELECT last_attempted_timestamp FROM pyth_submission_state WHERE publisher=? AND feed_id=?").get(publisher,update.feed_id) as {last_attempted_timestamp:number}|null;
         return !previous||update.source_timestamp>previous.last_attempted_timestamp;
       });
+      const added=fresh.filter(update=>!db.query("SELECT 1 FROM pyth_submission_state WHERE publisher=? AND feed_id=?").get(publisher,update.feed_id)).length;
+      if((db.query("SELECT COUNT(*) AS count FROM pyth_submission_state").get() as {count:number}).count+added>PYTH_RECOVERY_LIMITS.states)throw new Error("Pyth high-water capacity requires archival review");
       for(const update of fresh)db.query("INSERT INTO pyth_submission_state(publisher,feed_id,last_attempted_timestamp,last_queued_timestamp,last_attempt_id,last_status,updated_at) VALUES(?,?,?,0,?,'DELIVERY_UNCONFIRMED',?) ON CONFLICT(publisher,feed_id) DO UPDATE SET last_attempted_timestamp=excluded.last_attempted_timestamp,last_attempt_id=excluded.last_attempt_id,last_status=excluded.last_status,updated_at=excluded.updated_at").run(publisher,update.feed_id,update.source_timestamp,attemptId,now);
       return fresh;
     })();
     if(!params.length)return {status:"NO_NEW_SOURCE_DATA",feeds:[],snapshotHash};
     attempted=params.map(update=>({feedId:update.feed_id,sourceTimestamp:update.source_timestamp}));
     const receipt:PythQueueReceipt=await (dependencies.submit??submitToPythAgent)({...prepared,request:{...prepared.request,id:attemptId,params}},m.agentUrl,5000);
-    if(receipt.status!=="QUEUED_LOCAL"||receipt.requestId!==attemptId||receipt.snapshotHash!==snapshotHash||!Number.isSafeInteger(receipt.queuedAt)||receipt.queuedAt<=0)throw new Error("Invalid local Pyth queue receipt");
+    if(receipt.status!=="QUEUED_LOCAL"||receipt.requestId!==attemptId||receipt.snapshotHash!==snapshotHash||!Number.isSafeInteger(receipt.queuedAt)||receipt.queuedAt<initialTime||receipt.queuedAt>clock())throw new Error("Invalid local Pyth queue receipt");
     db.transaction(()=>{
       for(const update of attempted)db.query("UPDATE pyth_submission_state SET last_queued_timestamp=MAX(last_queued_timestamp,?),last_status=CASE WHEN last_attempt_id=? THEN 'QUEUED_LOCAL' ELSE last_status END,updated_at=MAX(updated_at,?) WHERE publisher=? AND feed_id=?").run(update.sourceTimestamp,attemptId,receipt.queuedAt,publisher,update.feedId);
       db.query("INSERT INTO pyth_queue_receipts(request_id,snapshot_hash,queued_at,feeds) VALUES(?,?,?,?)").run(attemptId,snapshotHash!,receipt.queuedAt,JSON.stringify(attempted));

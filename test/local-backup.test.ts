@@ -15,6 +15,9 @@ import { createRecoveryKey, RECOVERY_MARKER } from "../src/recovery";
 import { readStreamContainer } from "../src/stream-container";
 import { backupStreamFrames, inspectStreamBackup, restoreStreamNode, type StreamRecoveryOptions } from "../src/stream-recovery";
 import { Store } from "../src/store";
+import { publishSnapshot } from "../src/pyth/runtime";
+import { PYTH_PROTOCOL, type PythManifest, type PythPublication } from "../src/pyth";
+import { verifyPythRuntimeState } from "../src/pyth/recovery-state";
 import type { NodeIdentity, Registry } from "../src/types";
 import { environment, NOW } from "./helpers";
 
@@ -62,6 +65,37 @@ async function fixture() {
   return {directory,root,configPath,config,identity,store,keyPath,output,options,e,batches,body,evidenceHash,observations,hostedIdentity,hostedBackup};
 }
 type Fixture=Awaited<ReturnType<typeof fixture>>;
+test("actual four-model ChunkedJournal publication state survives encrypted V2 restore and prevents replay",async()=>{
+  const f=await fixture(),post=recordPostReviewFixture(f),snapshot=post.snapshot,now=snapshot.calculatedAt;
+  expect(snapshot.publishable).toBe(true);
+  const bindings=snapshot.feeds.filter(feed=>feed.kind!=="PROVIDER").map((feed,index)=>({indexFeedId:feed.id,pythFeedId:index+1,symbol:`TEST.${feed.id}/USD`,exponent:-9,minPublishers:3}));
+  expect(bindings.length).toBe(5);
+  const manifest:PythManifest={schemaVersion:1,enabled:true,network:snapshot.network,methodologyHash:snapshot.methodologyHash,registryHash:snapshot.registryHash,
+    agentUrl:"ws://127.0.0.1:8910/v1/jrpc",maxAgeMs:30000,futureToleranceMs:1000,
+    approval:{status:"APPROVED",publisherPublicKey:"11111111111111111111111111111111",evidence:"Isolated test only",verifiedAt:NOW-1000,expiresAt:NOW+100000,
+      protocol:PYTH_PROTOCOL,relayerUrls:["wss://publisher.example.test/v1/transaction"]},bindings};
+  let calls=0;
+  const dependencies={now:()=>now,fetchCatalog:async()=>bindings.map(binding=>({pyth_lazer_id:binding.pythFeedId,symbol:binding.symbol,exponent:binding.exponent,min_publishers:3,state:"stable"})),
+    submit:async(publication:PythPublication)=>{
+      calls++;return {status:"QUEUED_LOCAL" as const,requestId:publication.request.id,snapshotHash:publication.snapshotHash,queuedAt:now};
+    }};
+  const journal=new ChunkedJournal(f.store.db);
+  expect((await publishSnapshot(snapshot,manifest,journal,dependencies)).status).toBe("QUEUED_LOCAL");
+  const states=f.store.db.query("SELECT * FROM pyth_submission_state ORDER BY feed_id").all(),receipts=f.store.db.query("SELECT * FROM pyth_queue_receipts").all();
+  const result=await backup(f);expect(result.pythRecovery).toEqual({present:true,states:5,receipts:1,locks:0,upstreamPublication:"NOT_PROVEN"});
+  expect(f.store.db.query("SELECT * FROM pyth_submission_state ORDER BY feed_id").all()).toEqual(states);
+  const destination=join(f.directory,"pyth-restored");await restoreStreamNode(f.output,f.keyPath,destination,f.options);
+  const config=readJson<NodeConfig>(join(destination,"config/node.local.json"));expect(config.pythManifestPath).toBeUndefined();
+  expect(existsSync(join(destination,RECOVERY_MARKER))).toBe(true);
+  const restored=new Store(join(destination,config.databasePath));stores.add(restored);
+  expect(restored.db.query("SELECT * FROM pyth_submission_state ORDER BY feed_id").all()).toEqual(states);
+  expect(restored.db.query("SELECT * FROM pyth_queue_receipts").all()).toEqual(receipts);
+  expect(verifyPythRuntimeState(restored.db,Date.now()).states).toBe(5);
+  // Deliberately call the isolated runtime directly; production CLI remains blocked by its marker.
+  expect((await publishSnapshot(snapshot,manifest,restored,dependencies)).status).toBe("NO_NEW_SOURCE_DATA");expect(calls).toBe(1);
+  const newIdentity=readJson<NodeIdentity>(join(destination,config.identityPath)),next=join(f.directory,"pyth-next.sbx-stream");
+  expect((await backupLocalStreamNode(destination,join(destination,"config/node.local.json"),next,f.keyPath,{...f.options,expectedNodeId:newIdentity.nodeId})).pythRecovery.states).toBe(5);
+},30000);
 function backup(f:Fixture,options:Partial<Parameters<typeof backupLocalStreamNode>[4]>={}) {
   return backupLocalStreamNode(f.root,f.configPath,f.output,f.keyPath,{...f.options,...options});
 }

@@ -11,13 +11,14 @@ const registry=()=>{const r=defaultRegistry("test");Object.assign(r.providers[0]
 const inputs=()=> (["B200","B300","GB200","GB300"] as const).map(quote);
 test("single operator demo produces prices without oracle or Pyth publication",()=>{const result=centralizedDemo(inputs(),registry(),defaultMethodology(),identity,now);expect(result.feeds.at(-1)?.price).toBe("2.000000");expect(result.publishable).toBe(false);expect(result.pythPublished).toBe(false);expect(result.mode).toBe("CENTRALIZED_DEMO");});
 test("collection-only data stays private",()=>{const r=defaultRegistry("test");for(const p of r.providers){p.rights.redistribute=false;p.rights.derive=false;}const result=centralizedDemo(inputs(),r,defaultMethodology(),identity,now);expect(result.feeds.every(f=>f.price===null)).toBe(true);});
+test("derivation permission without redistribution does not publish a demo price",()=>{const r=registry();r.providers[0]!.rights.redistribute=false;expect(centralizedDemo(inputs(),r,defaultMethodology(),identity,now).feeds.every(f=>f.price===null)).toBe(true);});
 test("stale, expired, private and malformed observations never produce prices",()=>{for(const change of [{observedAt:now-900001},{expiresAt:now},{priceScope:"ACCOUNT_SPECIFIC"},{price:"invalid"}]){const result=centralizedDemo(inputs().map(o=>({...o,...change})),registry(),defaultMethodology(),identity,now);expect(result.feeds.every(f=>f.price===null)).toBe(true);}});
 test("missing model cannot create a composite",()=>{const result=centralizedDemo(inputs().slice(1),registry(),defaultMethodology(),identity,now);expect(result.feeds.at(-1)?.price).toBeNull();expect(result.feeds.some(f=>f.kind==="MODEL"&&f.price!==null)).toBe(true);});
 test("duplicate offers do not increase influence",()=>{const original=inputs();const duplicate=[...original,...original];expect(centralizedDemo(duplicate,registry(),defaultMethodology(),identity,now).feeds).toEqual(centralizedDemo(original,registry(),defaultMethodology(),identity,now).feeds);});
 test("expired source approval and unapproved origins are excluded",()=>{const r=registry();r.providers[0]!.rights.expiresAt=now;expect(centralizedDemo(inputs(),r,defaultMethodology(),identity,now).feeds.every(f=>f.price===null)).toBe(true);expect(centralizedDemo(inputs().map(o=>({...o,sourceUrl:"https://example.com"})),registry(),defaultMethodology(),identity,now).feeds.every(f=>f.price===null)).toBe(true);});
 
 test("self-hosted demo serves the latest complete capture without enabling oracle publication",async()=>{
-  const store=new Store(":memory:"), r=defaultRegistry("test");
+  const store=new Store(":memory:"), r=registry();
   const node=new OracleNode({identity,registry:r,methodology:defaultMethodology(),store,clock:()=>now});
   const get=(path:string)=>node.handle(new Request(`http://localhost${path}`));
   try {
@@ -31,7 +32,7 @@ test("self-hosted demo serves the latest complete capture without enabling oracl
     expect(demo.mode).toBe("CENTRALIZED_DEMO");expect(demo.publishable).toBe(false);expect(demo.pythPublished).toBe(false);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(JSON.stringify(demo)).not.toContain("evidenceHash");
-    expect(r.providers[0]!.rights.redistribute).toBe(false);
+    expect(r.providers[0]!.rights.redistribute).toBe(true);
     expect((await get("/v1/ready")).status).toBe(503);
     expect((await (await get("/v1/feeds")).json() as Snapshot).publishable).toBe(false);
     // An empty new cycle must not fall back to historical prices.

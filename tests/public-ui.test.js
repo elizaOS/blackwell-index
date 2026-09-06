@@ -66,3 +66,28 @@ describe("price mode separation", () => {
     const real = snapshot(); expect(validateModeSnapshot(real, "real")).toBe(real);
   });
 });
+
+import { resolveMode } from "../public/assets/mode.js";
+test("deployment flag defaults to real and requires explicit demo opt-in", () => {
+  expect(resolveMode()).toBe("real");
+  expect(resolveMode({})).toBe("real");
+  expect(resolveMode({ DEMO_MODE: false })).toBe("real");
+  expect(resolveMode({ DEMO_MODE: true })).toBe("demo");
+  expect(resolveMode({ DEMO_MODE: "false" })).toBe("real");
+});
+
+test("URL query parameters cannot override the deployment-configured price mode", () => {
+  // Separate process avoids mutating browser globals or module caches shared with other tests.
+  const moduleUrl = new URL("../public/assets/mode.js", import.meta.url).href;
+  const configUrl = new URL("../public/assets/config.js", import.meta.url).href;
+  const source = `const {deploymentConfig}=await import(${JSON.stringify(configUrl)}); const values=[];
+    for(const [index,search] of ["?mode=real","?mode=demo",""] .entries()) {
+      globalThis.location={search}; const current=await import(${JSON.stringify(moduleUrl)}+"?isolated="+index);
+      values.push({mode:current.mode,path:current.feedPath});
+    }
+    console.log(JSON.stringify({demoEnabled:deploymentConfig.DEMO_MODE===true,values}));`;
+  const child = Bun.spawnSync([process.execPath, "--eval", source], { env: {}, stdout: "pipe", stderr: "pipe", timeout: 10000 });
+  expect(child.exitCode).toBe(0); expect(child.stderr.toString()).toBe("");
+  const result = JSON.parse(child.stdout.toString()), configured = result.demoEnabled ? {mode:"demo",path:"/v1/demo"} : {mode:"real",path:"/v1/feeds"};
+  expect(result.values).toEqual([configured,configured,configured]);
+});
