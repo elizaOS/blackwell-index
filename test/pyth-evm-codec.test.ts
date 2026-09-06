@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import { decodePythEvmEnvelope, decodePythVerifyUpdateResult, decodeSbxEvmPayload, encodePythVerifyUpdateCall } from "../src/pyth/evm-codec";
+import {checkPythEvmBatchPolicy} from '../src/pyth/evm-policy';
+import {pythReadbackConfigSchema} from '../src/pyth/readback';
 
 // Invented, isolated wire fixtures. No real price, signature or publisher proof.
 const TIME = 1788732000000000n;
@@ -29,6 +31,35 @@ function result(body = payload()): Buffer {
   raw[31] = 64; raw.fill(1, 44, 64); raw.writeBigUInt64BE(BigInt(body.length), 88); body.copy(raw, 96); return raw;
 }
 const fieldValue = (property: number, value: bigint): Field[] => FIELDS.map(field => field[0] === property ? [property, value] : field);
+
+test('signed-byte batch policy reuses exact price, freshness and replay checks without state writes',()=>{
+  const binding={indexFeedId:'TEST.B200',pythFeedId:7,symbol:'TEST.B200/USD',exponent:-6,minPublishers:3};
+  const config=pythReadbackConfigSchema.parse({schemaVersion:1,enabled:true,maxAgeMs:30000,maxConfidenceBps:100,maxPriceDeviationBps:0});
+  const now=Number(TIME/1000n),expected=[{feedId:7,price:'123.456789',sourceTimestampUs:String(TIME-2000n)}];
+  const raw=asHex(payload());
+  const first=checkPythEvmBatchPolicy(raw,[binding],config,now,expected);
+  expect(first[0]!.report.status).toBe('ADVANCED');
+  const prior=first.map(value=>value.state),before=JSON.stringify(prior);
+  expect(checkPythEvmBatchPolicy(raw,[binding],config,now,expected,prior)[0]!.report.status).toBe('UNCHANGED');
+  expect(()=>checkPythEvmBatchPolicy(raw,[binding],config,now,[{...expected[0]!,price:'123.456788'}])).toThrow('PRICE_MISMATCH');
+  expect(()=>checkPythEvmBatchPolicy(raw,[binding],config,now+31000,expected)).toThrow('ENVELOPE_CLOCK_INVALID');
+  expect(()=>checkPythEvmBatchPolicy(raw,[{...binding,minPublishers:4}],config,now,expected)).toThrow('INSUFFICIENT_PUBLISHERS');
+  expect(()=>checkPythEvmBatchPolicy(raw,[binding],{...config,channel:'real_time'},now,expected)).toThrow('CHANNEL_MISMATCH');
+  expect(()=>checkPythEvmBatchPolicy(raw,[binding],config,now,[])).toThrow('EXPECTED_PRINTS_INVALID');
+  expect(()=>checkPythEvmBatchPolicy(raw,[binding,binding],config,now,expected)).toThrow('RESPONSE_FEED_SET_INVALID');
+  const conflicting=asHex(payload([{fields:fieldValue(5,126n)}]));
+  expect(()=>checkPythEvmBatchPolicy(conflicting,[binding],config,now,expected,prior)).toThrow('SAME_TIMESTAMP_CONFLICT');
+  expect(JSON.stringify(prior)).toBe(before);
+  // The first feed validates, then the second fails. Caller-owned high-water
+  // marks remain byte-for-byte unchanged and no partial result is returned.
+  const bindings=[binding,{...binding,pythFeedId:8,indexFeedId:'TEST.B300',symbol:'TEST.B300/USD'}];
+  const two=asHex(payload([{id:7},{id:8}]));
+  const expectations=[expected[0]!,{...expected[0]!,feedId:8,price:'999'}];
+  const frozen=Object.freeze(prior.map(value=>Object.freeze({...value})));
+  expect(()=>checkPythEvmBatchPolicy(two,bindings,config,now,expectations,frozen)).toThrow('PRICE_MISMATCH');
+  expect(JSON.stringify(frozen)).toBe(before);
+  expect(()=>checkPythEvmBatchPolicy(two,bindings,config,now,[expected[0]!,expected[0]!],frozen)).toThrow('EXPECTED_PRINTS_INVALID');
+});
 
 test("feed timestamp consumes its option tag and rejects absent or noncanonical tags", () => {
   const raw = payload(), flag = raw.length - 9;

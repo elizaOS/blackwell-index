@@ -125,7 +125,7 @@ function scope(manifest:PythManifest,configuration:PythReadbackConfig):string {
   return hash({kind:"SBX_PYTH_READBACK_V1",configuration,network:manifest.network,registryHash:manifest.registryHash,
     methodologyHash:manifest.methodologyHash,approval:manifest.approval,bindings:manifest.bindings});
 }
-function catalogCheck(raw:unknown,manifest:PythManifest,config:PythReadbackConfig):void {
+export function validatePythReadbackCatalog(raw:unknown,manifest:PythManifest,config:PythReadbackConfig):void {
   let parsed:ReturnType<typeof validatePythSymbols>;
   try{parsed=validatePythSymbols(raw);}catch{fail("CATALOG_INVALID");}
   const values=new Map(parsed.map(value=>[value.pyth_lazer_id,value]));
@@ -136,7 +136,8 @@ function catalogCheck(raw:unknown,manifest:PythManifest,config:PythReadbackConfi
     if(channelRank[config.channel]<channelRank[value.min_channel as (typeof channels)[number]])fail("CHANNEL_UNSUPPORTED");
   }
 }
-function feedValue(raw:unknown,binding:PythFeedBinding,config:PythReadbackConfig,now:number,envelopeUs:bigint,expected:PythExpectedPrint|undefined,previous:z.infer<typeof feedStateSchema>|undefined) {
+/** Shared policy for parsed or contract-returned values. Does not authenticate input. */
+export function validatePythReadbackFeed(raw:unknown,binding:PythFeedBinding,config:PythReadbackConfig,now:number,envelopeUs:bigint,expected:PythExpectedPrint|undefined,previous:z.infer<typeof feedStateSchema>|undefined) {
   if(!raw||typeof raw!=="object"||Array.isArray(raw))fail("FEED_INVALID");
   const value=raw as Record<string,unknown>;
   if(value.priceFeedId!==binding.pythFeedId||value.exponent!==binding.exponent)fail("FEED_IDENTITY_MISMATCH");
@@ -202,7 +203,7 @@ export async function readbackTick(options:PythReadbackTickOptions,dependencies:
     const tickDeadline=performance.now()+PYTH_READBACK_LIMITS.tickDurationMs,budget={remaining:PYTH_READBACK_LIMITS.tickBytes};
     const timeout=()=>{const remaining=Math.floor(tickDeadline-performance.now());if(remaining<=0)fail("TICK_DEADLINE_EXCEEDED");return Math.min(config!.requestTimeoutMs,remaining);};
     const catalog=await requestJson(PYTH_SYMBOLS_URL,{method:"GET"},PYTH_READBACK_LIMITS.catalogBytes,timeout(),now,request,options.signal,budget);
-    catalogCheck(catalog,manifest,config);
+    validatePythReadbackCatalog(catalog,manifest,config);
     const feeds=new Map<number,{value:unknown;envelope:bigint}>(),envelopes:bigint[]=[];
     for(let offset=0;offset<manifest.bindings.length;offset+=config.maxFeedsPerRequest) {
       const batch=manifest.bindings.slice(offset,offset+config.maxFeedsPerRequest),ids=new Set(batch.map(binding=>binding.pythFeedId));
@@ -230,7 +231,7 @@ export async function readbackTick(options:PythReadbackTickOptions,dependencies:
     const previous=new Map((state?.feeds??[]).map(value=>[value.feedId,value])),out=result("UNCHANGED",checkedAt,bootstrap);
     for(const binding of manifest.bindings) {
       if(!feeds.has(binding.pythFeedId)){out.feeds.push({feedId:binding.pythFeedId,status:"PRICE_UNAVAILABLE"});continue;}
-      try{const entry=feeds.get(binding.pythFeedId)!;const value=feedValue(entry.value,binding,config,checkedAt,entry.envelope,expected.get(binding.pythFeedId),previous.get(binding.pythFeedId));previous.set(binding.pythFeedId,value.state);out.feeds.push(value.report);}
+      try{const entry=feeds.get(binding.pythFeedId)!;const value=validatePythReadbackFeed(entry.value,binding,config,checkedAt,entry.envelope,expected.get(binding.pythFeedId),previous.get(binding.pythFeedId));previous.set(binding.pythFeedId,value.state);out.feeds.push(value.report);}
       catch(error){out.feeds.push({feedId:binding.pythFeedId,status:error instanceof ReadbackFailure?error.code:"FEED_INVALID"});}
     }
     const degraded=out.feeds.some(feed=>feed.status!=="ADVANCED"&&feed.status!=="UNCHANGED");
