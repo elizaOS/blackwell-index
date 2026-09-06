@@ -79,7 +79,9 @@ function render(snapshot) {
     card.querySelector(".model-price").setAttribute("aria-label", qualified(feed) ? `${formatPrice(feed)} per GPU-hour` : `Unavailable: ${reason(feed)}`);
   }
   renderProviders(snapshot.feeds);
-  setText("connection-status", "");
+  const times = snapshot.feeds.filter(qualified).map(feed => feed.observedAt);
+  const provenance = mode === "demo" ? "Centralized demo · Not published to Pyth" : "Locally qualified benchmark · Pyth publication unverified";
+  setText("connection-status", times.length ? `${provenance} · Oldest source check: ${timeLabel(Math.min(...times))}` : `${provenance} · No current source prices`);
 }
 
 function unavailable(message) {
