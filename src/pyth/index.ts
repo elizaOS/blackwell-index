@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Snapshot } from "../types";
+import { PYTH_RECOVERY_LIMITS } from "./recovery-state";
 
 /** The current official Pyth Pro publisher agent, not the retired Pythnet agent. */
 export const PYTH_PROTOCOL = "pyth-lazer-agent@0.16.0/protocol@0.46.0" as const;
@@ -107,6 +108,7 @@ export function validatePythManifest(value: unknown, now = Date.now()): PythMani
     assert(url.protocol === "wss:" && url.pathname === "/v1/transaction" && !url.username && !url.password && !url.search && !url.hash, "Invalid Pyth publisher ingress endpoint");
   }
   assert(Array.isArray(m.bindings) && m.bindings.length > 0, "Missing Pyth feed bindings");
+  assert(m.bindings.length<=PYTH_RECOVERY_LIMITS.feeds,"Pyth binding capacity requires review");
   const indexIds = new Set<string>();
   const pythIds = new Set<number>();
   for (const b of m.bindings) {

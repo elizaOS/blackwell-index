@@ -8,6 +8,7 @@
     "setup": "bun src/cli.ts setup",
     "start": "bun src/cli.ts run",
     "collect": "bun src/cli.ts collect",
+    "pyth:readback": "bun src/pyth/readback-cli.ts",
     "status": "bun src/cli.ts status",
     "replay": "bun src/cli.ts replay",
     "test": "bun test",

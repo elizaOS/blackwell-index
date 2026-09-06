@@ -72,6 +72,18 @@ The adapter targets the current official `pyth-lazer-agent` 0.16.0. It prepares 
 
 No SBX feed IDs, publisher credentials or Pyth approvals are bundled. Pyth acceptance is required for each publisher and feed. A local agent acknowledgement is labeled `QUEUED_LOCAL`; it is not proof of a published oracle. See [Pyth architecture, setup and readback requirements](docs/PYTH.md).
 
+The separate [authenticated readback monitor](docs/PYTH_READBACK.md) checks approved Pro feeds against retained local snapshots. It uses a backend `PYTH_PRO_API_KEY`, a private state database and the node's approved Pyth manifest. The supplied configuration is disabled; its example thresholds require review. No signed payload or chain transaction is verified by this offchain monitor.
+
+```sh
+bun run pyth:readback --dir /absolute/private/node \
+  --node-config config/node.local.json --config config/pyth-readback.json \
+  --state data/pyth-readback.sqlite --init-state --once
+```
+
+Use `--init-state` only for a reviewed first bootstrap; omit it on restart to preserve accepted timestamps and retry deadlines. Omit `--once` for an abortable continuous monitor under an operator-owned supervisor. See [Pyth recovery](docs/PYTH_RECOVERY.md) before restoring any publishing node; collector identity rotation alone does not revoke the previous Pyth publisher.
+
+The first chain target is **Base Sepolia, followed by Base mainnet**. Solana and Robinhood Chain follow with separate verification tests. [Chain selection and implementation gates](docs/PYTH_CHAIN_SELECTION.md) distinguishes supported Pyth contracts from an actual SBX integration; no SBX transaction has been verified yet.
+
 A self-hosted node can set `pythManifestPath` in its private configuration to attempt publication after each eligible collection cycle. The runtime checks current feed metadata, keeps durable per-feed timestamps, and connects to a separately running local Pyth agent. Hosted collector nodes do not hold Pyth signing keys.
 
 ## Verification

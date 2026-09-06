@@ -60,7 +60,7 @@ Run these only with an approved, trusted snapshot and a current protected manife
 
 Per-feed attempted and locally queued source timestamps survive restart. The runtime reserves a timestamp before contacting the agent: a crash, lost acknowledgement or timeout is `DELIVERY_UNCONFIRMED`, never successful publication. It does not automatically resend that ambiguous timestamp. A genuinely newer source observation is required; operators must reconcile ambiguous attempts using agent and upstream evidence. Successful local receipts are retained in a bounded operational log, separately from the permanent per-feed high-water marks. A new calculation time or changed price alone cannot refresh an old source timestamp.
 
-Without an approved protected manifest, the automated hook must remain unconfigured. No API key, assigned feed ID, publisher approval or relayer endpoint is supplied by this code. Upstream monitoring remains a separate acceptance requirement below.
+Without an approved protected manifest, the automated hook must remain unconfigured. No API key, assigned feed ID, publisher approval or relayer endpoint is supplied by this code. The separate [readback command](PYTH_READBACK.md) implements authenticated observation against reproduced local snapshots; live acceptance remains required below. [Publishing-node recovery](PYTH_RECOVERY.md) preserves anti-replay state but cannot prove that an old backup contains the latest upstream attempt.
 
 ## Readback and completion evidence
 
@@ -76,6 +76,8 @@ Pyth may carry the previous value forward when publisher quorum is absent. Consu
 6. Source-loss, publisher-loss, key rotation, failover, incorrect exponent and carried-price drills.
 
 No configured adapter, local acknowledgement, mocked integration test, SDK installation or contract deployment alone satisfies these requirements.
+
+The selected first consumer integration is **Pyth Pro on Base Sepolia, then Base mainnet**. Solana and Robinhood Chain remain planned targets. Each needs its own official deployment/version checks, signed-payload tests and real transaction evidence. Pro uses assigned numeric feed IDs and verifies a supplied payload; do not substitute a Core stored-feed interface or invent a Core mapping. See [chain selection](PYTH_CHAIN_SELECTION.md).
 
 ## Accounts and costs
 
