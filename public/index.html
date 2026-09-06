@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Blackwell Index: provider reference prices for NVIDIA B200, B300, GB200 and GB300 compute, with an open methodology and node software.">
+  <meta name="color-scheme" content="light">
+  <title>Blackwell Index — SBX</title>
+  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/site.css">
+  <script type="module" src="/assets/index.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="shell">
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="Blackwell Index home"><span class="brand-mark" aria-hidden="true">B</span><span>Blackwell Index</span></a>
+      <nav aria-label="Main navigation"><a href="/methodology.html">Methodology</a><a href="https://github.com/elizaOS/blackwell-index#run-a-node">Run a node <span aria-hidden="true">↗</span></a></nav>
+    </header>
+
+    <main id="main">
+      <section class="intro">
+        <p class="eyebrow">SBX · Compute reference prices</p>
+        <h1>Blackwell Index</h1>
+        <p class="intro-copy">B200, B300, GB200 and GB300. Provider prices and a weighted composite in USD per GPU-hour.</p>
+        <div class="status-line"><span class="status-dot" id="connection-dot" aria-hidden="true"></span><span id="connection-status" role="status" aria-live="polite">Connecting to the node</span><span class="status-divider" aria-hidden="true">/</span><span>Pyth publication pending</span></div>
+      </section>
+
+      <section class="composite-card" aria-labelledby="composite-heading">
+        <div class="composite-main">
+          <div class="card-heading"><h2 id="composite-heading">SBX composite</h2><span class="badge" id="composite-status">Unavailable</span></div>
+          <p class="composite-price" id="composite-price">—</p>
+          <p class="price-unit">USD / GPU-hour</p>
+          <p class="feed-reason" id="composite-reason">Waiting for a current snapshot.</p>
+        </div>
+        <div class="composite-detail">
+          <p class="detail-label">Model weights</p>
+          <div class="weight-list" id="model-weights"><span>Not available</span></div>
+          <p class="detail-note">Available when all four model prices meet the methodology.</p>
+        </div>
+      </section>
+
+      <section class="model-grid" aria-label="GPU model prices">
+        <article class="model-card" data-model="B200"><div class="card-heading"><h2>B200</h2><span class="badge">Unavailable</span></div><p class="model-price">—</p><p class="price-unit">USD / GPU-hour</p><p class="feed-reason">Waiting for data.</p></article>
+        <article class="model-card" data-model="B300"><div class="card-heading"><h2>B300</h2><span class="badge">Unavailable</span></div><p class="model-price">—</p><p class="price-unit">USD / GPU-hour</p><p class="feed-reason">Waiting for data.</p></article>
+        <article class="model-card" data-model="GB200"><div class="card-heading"><h2>GB200</h2><span class="badge">Unavailable</span></div><p class="model-price">—</p><p class="price-unit">USD / GPU-hour</p><p class="feed-reason">Waiting for data.</p></article>
+        <article class="model-card" data-model="GB300"><div class="card-heading"><h2>GB300</h2><span class="badge">Unavailable</span></div><p class="model-price">—</p><p class="price-unit">USD / GPU-hour</p><p class="feed-reason">Waiting for data.</p></article>
+      </section>
+
+      <section class="provider-section" aria-labelledby="provider-heading">
+        <div class="section-heading"><div><p class="eyebrow">Sources</p><h2 id="provider-heading">Provider prices</h2></div><p class="section-meta" id="provider-summary">Awaiting source status</p></div>
+        <div class="table-wrap"><table><caption class="visually-hidden">Provider prices in USD per GPU-hour. Unavailable prices show a dash.</caption><thead><tr><th scope="col">Provider</th><th scope="col">B200</th><th scope="col">B300</th><th scope="col">GB200</th><th scope="col">GB300</th></tr></thead><tbody id="provider-rows"><tr><td colspan="5" class="empty-state">Source status will appear when the node responds.</td></tr></tbody></table></div>
+        <p class="table-note">Prices include each provider’s instance bundle. Hardware, region and commercial terms remain part of the underlying observation.</p>
+      </section>
+
+      <section class="snapshot-details" aria-label="Snapshot details"><p><span class="detail-label">Calculated</span><time id="calculated-at">—</time></p><p><span class="detail-label">Methodology</span><span id="methodology-version">—</span></p><p><span class="detail-label">Benchmark status</span><span id="benchmark-status">Unavailable</span></p><a href="/v1/feeds">View API response <span aria-hidden="true">↗</span></a></section>
+      <noscript><p class="notice">JavaScript is needed to display feed updates. The <a href="/v1/feeds">API response</a> is available directly.</p></noscript>
+    </main>
+    <footer class="site-footer"><p>An open reference for Blackwell compute.</p><div><a href="https://github.com/elizaOS/blackwell-index">Source code</a><a href="https://altx.exchange">ALTX <span aria-hidden="true">↗</span></a></div></footer>
+  </div>
+</body>
+</html>

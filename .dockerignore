@@ -1,0 +1,13 @@
+.git
+node_modules
+data
+.env*
+.dev.vars*
+.wrangler
+artifacts
+test
+tests
+docs
+**/config/*.local.json
+**/*.test.ts
+**/*.test.js

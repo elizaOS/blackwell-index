@@ -1,0 +1,16 @@
+node_modules/
+.wrangler/
+dist/
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+data/
+artifacts/
+*.pem
+*.key
+*keypair*.json
+**/config/node.local.json
+**/config/registry.local.json
+**/config/methodology.local.json

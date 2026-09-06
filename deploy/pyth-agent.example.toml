@@ -1,0 +1,17 @@
+# Official pyth-lazer-agent 0.16.0. This configuration cannot publish until
+# Pyth supplies ingress endpoints and accepts the signing key and feed IDs.
+# Complete a protected copy outside Git. Empty ingress intentionally disables
+# remote delivery. Do not substitute consumer /v1/stream endpoints.
+relayer_urls = []
+publish_keypair_path = "/run/secrets/pyth-publisher-keypair.json"
+listen_address = "127.0.0.1:8910"
+# Loopback is not authentication. Put agent and publisher in an isolated service
+# network namespace; do not expose this signing socket to browsers or other users.
+publish_interval_duration = "25ms"
+enable_update_deduplication = false
+history_service_url = "https://pyth.dourolabs.app/v1/symbols"
+
+# Use only if Pyth instructs that this publisher needs a token. Supply through
+# the environment/secret manager, not this file:
+# LAZER_AGENT__AUTHORIZATION_TOKEN
+# New publishers can authenticate with the accepted public key instead.

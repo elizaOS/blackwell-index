@@ -1,0 +1,33 @@
+{
+  "$schema": "https://raw.githubusercontent.com/cloudflare/workers-sdk/main/packages/wrangler/config-schema.json",
+  "name": "blackwell-index",
+  "main": "src/cloudflare/index.ts",
+  "compatibility_date": "2026-09-06",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none",
+    "not_found_handling": "none"
+  },
+  "durable_objects": {"bindings": [{"name": "SBX_NODES", "class_name": "SbxNode"}]},
+  "migrations": [{"tag": "v1", "new_sqlite_classes": ["SbxNode"]}],
+  "triggers": {"crons": ["*/15 * * * *"]},
+  "vars": {
+    "SBX_NETWORK": "sbx-mainnet",
+    "SBX_OPERATOR_GROUP": "elizaos-cloudflare",
+    "SBX_COLLECTORS": "oracle-public,azure-retail",
+    "SBX_COLLECTION_INTERVAL_MS": "300000"
+  },
+  "routes": [
+    {"pattern": "blackwellindex.com", "custom_domain": true},
+    {"pattern": "primary.blackwellindex.com", "custom_domain": true},
+    {"pattern": "secondary.blackwellindex.com", "custom_domain": true},
+    {"pattern": "blackwell.fyi", "custom_domain": true},
+    {"pattern": "blackwell.today", "custom_domain": true},
+    {"pattern": "altx.exchange", "custom_domain": true}
+  ]
+}

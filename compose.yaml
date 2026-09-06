@@ -1,0 +1,15 @@
+services:
+  node:
+    build: .
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    ports: ["127.0.0.1:3410:3410"]
+    volumes: ["sbx-data:/var/lib/sbx"]
+    env_file:
+      - path: .env
+        required: false
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+volumes:
+  sbx-data:

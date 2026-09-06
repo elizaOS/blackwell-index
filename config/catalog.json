@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "reviewedAt": "2026-09-06",
+  "purpose": "Provider discovery and access status. This is not the approved provider registry and grants no data rights.",
+  "providers": [
+    { "id": "oracle", "models": ["B200", "B300", "GB200", "GB300"], "collector": "oracle-public", "status": "IMPLEMENTED_PUBLIC_LIST", "credentials": [], "endpoint": "https://apexapps.oracle.com/pls/apex/cetools/api/v1/products/", "publicationRights": "UNVERIFIED" },
+    { "id": "azure", "models": ["GB200", "GB300"], "collector": "azure-retail", "status": "IMPLEMENTED_PUBLIC_LIST_GB300_PRICE_MISSING", "credentials": [], "endpoint": "https://prices.azure.com/api/retail/prices", "publicationRights": "UNVERIFIED" },
+    { "id": "lambda", "models": ["B200"], "collector": "lambda-cloud", "status": "IMPLEMENTED_AUTHENTICATED_NOT_LIVE_VERIFIED", "credentials": ["LAMBDA_API_KEY"], "endpoint": "https://cloud.lambda.ai/api/v1/instance-types", "publicationRights": "UNVERIFIED" },
+    { "id": "runpod", "models": ["B200", "B300"], "collector": "runpod-secure", "status": "IMPLEMENTED_AUTHENTICATED_NOT_LIVE_VERIFIED", "credentials": ["RUNPOD_API_KEY"], "endpoint": "https://api.runpod.io/graphql", "publicationRights": "WRITTEN_PERMISSION_REQUIRED" },
+    { "id": "vast", "models": [], "collector": "vast-offers", "status": "IMPLEMENTED_AUTHENTICATED_NOT_LIVE_VERIFIED", "credentials": ["VAST_API_KEY"], "endpoint": "https://console.vast.ai/api/v0/bundles", "publicationRights": "WRITTEN_PERMISSION_REQUIRED" },
+    { "id": "aws", "models": ["B200", "B300", "GB200", "GB300"], "collector": "aws-pricing", "status": "IMPLEMENTED_AUTHENTICATED_NOT_LIVE_VERIFIED", "credentials": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN_FOR_TEMPORARY_CREDENTIALS"], "endpoint": "https://api.pricing.us-east-1.amazonaws.com", "publicationRights": "UNVERIFIED" },
+    { "id": "google", "models": ["B200", "GB200", "GB300"], "collector": "google-billing", "status": "IMPLEMENTED_DISCOVERY_AND_COMPOSITION_MAPPING_REQUIRED_NOT_LIVE_VERIFIED", "credentials": ["GOOGLE_CLOUD_BILLING_API_KEY"], "configuration": ["GOOGLE_BILLING_SKU_MAP_JSON"], "endpoint": "https://cloudbilling.googleapis.com/v1/services", "publicationRights": "UNVERIFIED" },
+    { "id": "nebius", "models": ["B200", "B300", "GB200", "GB300"], "collector": null, "status": "CONFLICTING_RATE_CARDS_FEED_REQUIRED", "credentials": [], "endpoint": null, "publicationRights": "UNVERIFIED" },
+    { "id": "coreweave", "models": ["B200", "B300", "GB200", "GB300"], "collector": null, "status": "PROVIDER_FEED_REQUIRED", "credentials": [], "endpoint": null, "publicationRights": "UNVERIFIED" },
+    { "id": "crusoe", "models": ["B200"], "collector": null, "status": "PRICING_FEED_REQUIRED", "credentials": ["CRUSOE_ACCESS_KEY", "CRUSOE_SECRET_KEY"], "endpoint": null, "publicationRights": "UNVERIFIED" },
+    { "id": "hyperstack", "models": ["B200"], "collector": null, "status": "DOCUMENTED_ACCOUNT_PRICE_API_ADAPTER_PENDING", "credentials": ["HYPERSTACK_API_KEY"], "endpoint": "https://infrahub-api.nexgencloud.com/v1/pricebook", "publicationRights": "UNVERIFIED" },
+    { "id": "shadeform", "models": [], "collector": null, "status": "DOCUMENTED_RESELLER_API_ADAPTER_PENDING", "credentials": ["SHADEFORM_API_KEY"], "endpoint": "https://api.shadeform.ai/v1/instances/types", "publicationRights": "UNVERIFIED" },
+    { "id": "primeintellect", "models": [], "collector": null, "status": "DOCUMENTED_RESELLER_API_ADAPTER_PENDING", "credentials": ["PRIME_API_KEY"], "endpoint": "https://api.primeintellect.ai/api/v1/availability/gpus", "publicationRights": "UNVERIFIED" },
+    { "id": "tensordock", "models": [], "collector": null, "status": "CURRENT_SCHEMA_AND_BLACKWELL_COVERAGE_UNVERIFIED", "credentials": [], "endpoint": null, "publicationRights": "UNVERIFIED" },
+    { "id": "verda", "models": ["B200"], "collector": null, "status": "CURRENT_PRICING_SCHEMA_UNVERIFIED", "credentials": [], "endpoint": null, "publicationRights": "UNVERIFIED" },
+    { "id": "gcore", "models": ["B300", "GB300"], "collector": null, "status": "PUBLIC_EUR_RATE_AND_SALES_LED_GB300", "credentials": [], "endpoint": null, "publicationRights": "UNVERIFIED" },
+    { "id": "stn", "models": ["B300", "GB300"], "collector": null, "status": "CONTRACT_TERM_RATE_CARD", "credentials": [], "endpoint": null, "publicationRights": "UNVERIFIED" },
+    { "id": "together", "models": ["B200"], "collector": null, "status": "PROVIDER_FEED_REQUIRED", "credentials": [], "endpoint": null, "publicationRights": "UNVERIFIED" },
+    { "id": "fluidstack", "models": [], "collector": null, "status": "SALES_LED_FEED_REQUIRED", "credentials": [], "endpoint": null, "publicationRights": "UNVERIFIED" },
+    { "id": "voltagepark", "models": [], "collector": null, "status": "SALES_LED_FEED_REQUIRED", "credentials": [], "endpoint": null, "publicationRights": "UNVERIFIED" },
+    { "id": "nvidia-lepton", "models": [], "collector": null, "status": "MARKETPLACE_WORKSPACE_AND_PROVIDER_RIGHTS_REQUIRED", "credentials": [], "endpoint": null, "publicationRights": "UNVERIFIED" }
+  ]
+}
