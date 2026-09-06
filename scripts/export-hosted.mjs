@@ -18,7 +18,7 @@ async function main() {
   const proxy=await getPlatformProxy({configPath:resolve(root,"config/hosted-recovery.wrangler.jsonc"),persist:false,remoteBindings:true});
   activeProxy=proxy;
   try {
-    const response=await proxy.env.RECOVERY.exportRecovery(values.node);
+    const response=await proxy.env.RECOVERY.fetch(`https://recovery.internal/export/${values.node}`,{method:"POST"});
     if(!response.ok||!response.headers.get("content-type")?.includes("application/vnd.sbx.hosted-journal+json"))throw new Error("HOSTED_EXPORT_RESPONSE_INVALID");
     const parts=[];let bytes=0;
     for await(const part of response.body){bytes+=part.byteLength;if(bytes>MAX_BYTES)throw new Error("HOSTED_EXPORT_TOO_LARGE");parts.push(Buffer.from(part));}

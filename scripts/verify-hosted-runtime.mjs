@@ -27,8 +27,8 @@ function cli(args,input) {
 try {
   const worker=await mf.getWorker("isolated-sbx");
   const before=await (await worker.fetch("https://primary.blackwellindex.com/v1/status")).json();
-  const rpc=(await mf.getBindings("isolated-client")).RECOVERY;
-  const response=await rpc.exportRecovery("primary");
+  const recovery=(await mf.getBindings("isolated-client")).RECOVERY;
+  const response=await recovery.fetch("https://recovery.internal/export/primary",{method:"POST"});
   assert.equal(response.status,200);
   const encoded=await response.text();
   assert(!encoded.includes("PRIVATE KEY"));
@@ -44,8 +44,9 @@ try {
   const after=await (await worker.fetch("https://primary.blackwellindex.com/v1/status")).json();
   assert.equal(after.nodeId,before.nodeId);
   assert.equal((await worker.fetch("https://primary.blackwellindex.com/v1/ready")).status,503);
-  for(const path of ["/exportRecovery","/v1/exportRecovery","/internal/exportRecovery","/v1/recovery","/node/primary/exportRecovery"])
-    assert.equal((await worker.fetch(`https://primary.blackwellindex.com${path}`)).status,404);
-  await assert.rejects(async()=>await rpc.exportRecovery("unknown"),/UNKNOWN_NODE/);
-  console.log(JSON.stringify({status:"PASS",runtime:"workerd",privateRpc:true,verifiedEncryptedRestore:true,identityUnchanged:true,publicExportPathsDenied:5,providerRequests:0}));
+  for(const path of ["/exportRecovery","/v1/exportRecovery","/internal/exportRecovery","/v1/recovery","/node/primary/exportRecovery","/internal/export-recovery","/node/primary/internal/export-recovery"])
+    for(const method of ["GET","POST"])assert([404,405].includes((await worker.fetch(`https://primary.blackwellindex.com${path}`,{method})).status));
+  for(const [path,method] of [["/export/unknown","POST"],["/export/primary","GET"],["/export/primary?bypass=1","POST"]])
+    assert.equal((await recovery.fetch(`https://recovery.internal${path}`,{method})).status,404);
+  console.log(JSON.stringify({status:"PASS",runtime:"workerd",privateServiceBinding:true,verifiedEncryptedRestore:true,identityUnchanged:true,publicExportRequestsDenied:14,providerRequests:0}));
 } finally {clearTimeout(timeout);await mf.dispose();rmSync(scratch,{recursive:true,force:true});}

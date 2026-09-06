@@ -49,6 +49,11 @@ export class SbxNode extends DurableObject<WorkerEnvironment> {
 
   async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
+    if(path==="/internal/export-recovery"&&request.method==="POST") {
+      const name=request.headers.get("x-sbx-recovery-node");
+      if(name!=="primary"&&name!=="secondary")return json({error:"UNKNOWN_NODE"},404);
+      return this.#exportRecovery(name);
+    }
     if (path === "/internal/wake" && request.method === "POST") {
       if (await this.ctx.storage.getAlarm() === null) await this.ctx.storage.setAlarm(Date.now() + 1000);
       return json({scheduled:true});
@@ -81,23 +86,28 @@ export class SbxNode extends DurableObject<WorkerEnvironment> {
     }
   }
 
-  /** RPC only. No fetch route dispatches to this method; private key/KV are never exported. */
-  async exportRecovery(nodeName: "primary" | "secondary"): Promise<Response> {
+  /** Only the private internal binding route reaches this method; key/KV are never exported. */
+  #exportRecovery(nodeName: "primary" | "secondary"): Response {
     if(!NODE_NAMES.includes(nodeName))throw new Error("UNKNOWN_NODE");
     const collection=this.ctx.storage.kv.get<CollectionState>("collection:v1");
     if(collection?.status==="RUNNING")throw new Error("COLLECTION_RUNNING_RETRY_EXPORT");
     const body=createHostedExport(this.journal,this.identity,{nodeName,operatorGroup:this.config.operatorGroup,release:this.release,
       network:this.config.network,intervalMs:this.config.intervalMs,registry:this.config.registry,methodology:this.config.methodology});
-    // Response bodies stream separately from RPC values; the snapshot also has its own stricter size cap.
+    // Stream through native Fetcher bindings; no arbitrary-RPC response stub crosses Wrangler's bridge.
     return new Response(body,{headers:{"content-type":"application/vnd.sbx.hosted-journal+json","cache-control":"no-store"}});
   }
 }
 
 /** Cloudflare account/service-binding authority only; not an HTTP administration endpoint. */
 export class RecoveryService extends WorkerEntrypoint<WorkerEnvironment> {
-  async exportRecovery(nodeName: "primary" | "secondary"): Promise<Response> {
-    if(!NODE_NAMES.includes(nodeName))throw new Error("UNKNOWN_NODE");
-    return this.env.SBX_NODES.getByName(nodeName).exportRecovery(nodeName);
+  async fetch(request:Request):Promise<Response> {
+    const url=new URL(request.url),match=/^\/export\/(primary|secondary)$/.exec(url.pathname);
+    if(request.method!=="POST"||!match||url.search)return json({error:"NOT_FOUND"},404);
+    // No request payload is consumed or interpreted; some Fetcher bridges supply an empty body stream.
+    const nodeName=match[1] as typeof NODE_NAMES[number];
+    return this.env.SBX_NODES.getByName(nodeName).fetch(new Request("https://node.internal/internal/export-recovery",{
+      method:"POST",headers:{"x-sbx-recovery-node":nodeName},
+    }));
   }
 }
 

@@ -148,7 +148,7 @@ async function main(): Promise<void> {
     })),
   ];
   const privatePaths = ["/internal/wake", "/internal/", "/v1/evidence", "/v1/captures", "/data/credentials.json", "/data/node-identity.json", "/data/node.sqlite", "/.env", "/config/node.local.json", "/node/unapproved/v1/status",
-    "/exportRecovery", "/v1/exportRecovery", "/internal/exportRecovery", "/v1/recovery", "/node/primary/exportRecovery"];
+    "/exportRecovery", "/v1/exportRecovery", "/internal/exportRecovery", "/v1/recovery", "/node/primary/exportRecovery", "/internal/export-recovery", "/node/primary/internal/export-recovery"];
   for (const base of [index, altx, primary, secondary]) for (const path of privatePaths) tasks.push(() => check(`private route ${base.origin}${path}`, async () => {
     // Do not read, print or persist a body from a route that must remain private.
     const response = await request(new URL(path, base), false);
