@@ -215,7 +215,8 @@ export async function verifyDeployment(args: string[] = process.argv.slice(2), r
   const tasks: (() => Promise<void>)[] = [
     ...[[index, "/", "index.html"], [altx, "/", "altx/index.html"], [index, "/assets/index.js", "assets/index.js"],
       [index, "/assets/site.css", "assets/site.css"], [altx, "/assets/site.css", "assets/site.css"], [index, "/methodology.html", "methodology.html"],
-      [index, "/providers.html", "providers.html"], [index, "/assets/mode.js", "assets/mode.js"],
+      [index, "/providers.html", "providers.html"], [index, "/assets/mode.js", "assets/mode.js"], [index, "/assets/config.js", "assets/config.js"],
+      // Legacy query parameters must serve the same deployment-configured page, not select a mode.
       [index, "/?mode=demo", "index.html"], [index, "/?mode=real", "index.html"]]
       .map(([base, path, file]) => () => check(`asset ${new URL(path as string, base as URL)}`, () => asset(base as URL, path as string, file as string))),
     ...[index, altx, primary, secondary].map(base => () => check(`demo ${base.origin}`, async () => {

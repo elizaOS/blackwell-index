@@ -141,7 +141,7 @@ function deploymentFixture(override: Override = (_url, _method, normal) => norma
   const requests: Array<{ url: string; method: string }> = [], now = Date.now();
   const value = demo(now), empty = { ...value, registryHash: hash(registry), methodologyHash: hash(methodology), feeds: value.feeds.map(feed => ({ ...feed, status: "UNAVAILABLE", price: null, confidence: null, observedAt: null })) };
   const body = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
-  const assets: Record<string, string> = { "/": "index.html", "/providers.html": "providers.html", "/methodology.html": "methodology.html", "/assets/index.js": "assets/index.js", "/assets/mode.js": "assets/mode.js", "/assets/site.css": "assets/site.css" };
+  const assets: Record<string, string> = { "/": "index.html", "/providers.html": "providers.html", "/methodology.html": "methodology.html", "/assets/index.js": "assets/index.js", "/assets/mode.js": "assets/mode.js", "/assets/config.js": "assets/config.js", "/assets/site.css": "assets/site.css" };
   const request = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     const url = new URL(String(input)), method = init?.method ?? "GET"; requests.push({ url: url.toString(), method });
     let response: Response;
@@ -166,19 +166,19 @@ test("complete isolated acceptance checks demo/assets while retaining all oracle
   expect(result.status).toBe("PASS"); expect(result.failures).toEqual([]);
   expect((result.demos as unknown[]).length).toBe(4);
   const urls = fixture.requests.map(item => item.url);
-  for (const path of ["/providers.html", "/assets/mode.js", "/?mode=demo", "/?mode=real"]) expect(urls).toContain(`https://blackwellindex.com${path}`);
+  for (const path of ["/providers.html", "/assets/mode.js", "/assets/config.js", "/?mode=demo", "/?mode=real"]) expect(urls).toContain(`https://blackwellindex.com${path}`);
   for (const host of ["blackwellindex.com", "altx.exchange", "primary.blackwellindex.com", "secondary.blackwellindex.com"]) expect(urls).toContain(`https://${host}/v1/demo`);
   expect(fixture.requests.filter(item => item.method === "POST").length).toBe(16);
   expect((result.privateRoutes as { checked: number }).checked).toBe(92);
   expect(JSON.stringify(result)).not.toContain(PRIVATE);
 });
 
-for (const change of ["demo-missing", "demo-unavailable", "demo-publishable", "provider-asset", "mode-asset", "real-mode-html", "oracle-price", "ready-200", "pyth-published", "reports-public", "private-get", "private-post"] as const) test(`release acceptance fails ${change} without weakening original gates`, async () => {
+for (const change of ["demo-missing", "demo-unavailable", "demo-publishable", "provider-asset", "mode-asset", "deployment-config-asset", "query-html", "oracle-price", "ready-200", "pyth-published", "reports-public", "private-get", "private-post"] as const) test(`release acceptance fails ${change} without weakening original gates`, async () => {
   const fixture = deploymentFixture((url, method, normal) => {
     if (change === "demo-missing" && url.pathname === "/v1/demo") return new Response("missing", { status: 404 });
     if (change === "demo-unavailable" && url.pathname === "/v1/demo") return fixture.body(demo(Date.now(), []));
     if (change === "demo-publishable" && url.pathname === "/v1/demo") return fixture.body({ ...demo(Date.now()), publishable: true });
-    if (change === "provider-asset" && url.pathname === "/providers.html" || change === "mode-asset" && url.pathname === "/assets/mode.js" || change === "real-mode-html" && url.search === "?mode=real") return new Response("incorrect deployed bytes");
+    if (change === "provider-asset" && url.pathname === "/providers.html" || change === "mode-asset" && url.pathname === "/assets/mode.js" || change === "deployment-config-asset" && url.pathname === "/assets/config.js" || change === "query-html" && url.search === "?mode=real") return new Response("incorrect deployed bytes");
     if (change === "oracle-price" && url.pathname === "/v1/feeds") return normal.json().then(value => {
       const snapshot = value as { feeds: Array<Record<string, unknown>> };
       Object.assign(snapshot.feeds[0]!, { status: "READY", price: "1.000000", observedAt: Date.now() });
