@@ -15,6 +15,9 @@ import { backupHostedExport } from "./hosted-recovery";
 import { HOSTED_EXPORT_LIMITS } from "./hosted-export";
 import { Database } from "bun:sqlite";
 import { operatingStudy } from "./study";
+import { streamingStudy } from "./stream-study";
+import { backupStreamFrames, inspectStreamBackup, restoreStreamNode } from "./stream-recovery";
+import { ARCHIVE_LIMITS } from "./archive-protocol";
 import type { SqlDriver } from "./journal";
 import type { NodeIdentity, Observation, SignedBatch } from "./types";
 
@@ -22,11 +25,11 @@ function cliArguments() {
   try {return parseArgs({args:process.argv.slice(2),allowPositionals:true,options:{
   config:{type:"string",default:"config/node.local.json"},dir:{type:"string",default:"."},providers:{type:"string"},
   peers:{type:"string"},port:{type:"string"},host:{type:"string"},"allow-loopback":{type:"boolean",default:false},at:{type:"string"},from:{type:"string"},sequence:{type:"string"},
-  output:{type:"string"},input:{type:"string"},"key-file":{type:"string"},target:{type:"string"},
-  "expected-node-id":{type:"string"},"expected-release":{type:"string"},
+  output:{type:"string"},input:{type:"string"},"key-file":{type:"string"},target:{type:"string"},stream:{type:"boolean",default:false},
+  "expected-node-id":{type:"string"},"expected-release":{type:"string"},"max-archive-bytes":{type:"string"},
 }});}catch(error) {
     // Argument-parser diagnostics can echo untrusted flags and values before main().
-    if(process.argv.slice(2).includes("import-hosted-backup")) {process.stderr.write("HOSTED_BACKUP_IMPORT_FAILED\n");process.exit(1);}
+    if(process.argv.slice(2).some(value=>["import-hosted-backup","import-stream-backup","backup-stream-inspect","restore-stream"].includes(value))) {process.stderr.write("HOSTED_BACKUP_IMPORT_FAILED\n");process.exit(1);}
     throw error;
   }
 }
@@ -88,6 +91,50 @@ async function readSecret():Promise<string> {
   });
 }
 async function main():Promise<void> {
+  if(["import-stream-backup","backup-stream-inspect","restore-stream"].includes(command)) {
+    const controller=new AbortController();let reading=command==="import-stream-backup";
+    const interrupt=()=>{controller.abort();if(reading)process.stdin.destroy(new Error("HOSTED_IMPORT_INTERRUPTED"));};
+    process.on("SIGINT",interrupt);process.on("SIGTERM",interrupt);
+    try {
+      if(!values["key-file"]||!/^[a-f0-9]{64}$/.test(values["expected-node-id"]??"")||!/^[a-f0-9]{40}$/.test(values["expected-release"]??""))throw new Error("INVALID_STREAM_ARGUMENTS");
+      const maxArchiveBytes=studyTime(values["max-archive-bytes"]);
+      const options={signal:controller.signal,expectedNodeId:values["expected-node-id"]!,expectedRelease:values["expected-release"]!,...(maxArchiveBytes===undefined?{}:{maxArchiveBytes})};
+      const key=resolve(root,values["key-file"]);
+      if(command==="import-stream-backup") {
+        if(!values.output)throw new Error("STREAM_OUTPUT_REQUIRED");
+        async function* frames():AsyncGenerator<Uint8Array> {
+          // Each stdin byte is copied once into a fixed bounded frame. Repeated
+          // tiny pipe chunks must not cause quadratic concatenation work.
+          const pending=Buffer.allocUnsafe(ARCHIVE_LIMITS.transportBytes);let used=0;
+          for await(const part of process.stdin) {
+            const chunk=Buffer.from(part);let start=0;
+            for(let index=0;index<chunk.length;index++)if(chunk[index]===10) {
+              const length=index-start;
+              if(used+length>ARCHIVE_LIMITS.transportBytes)throw new Error("STREAM_FRAME_TOO_LARGE");
+              pending.set(chunk.subarray(start,index),used);used+=length;start=index+1;
+              if(!used)throw new Error("STREAM_EMPTY_FRAME");
+              // Own the yielded bytes; the working buffer is reused only after
+              // downstream verification/encryption has consumed this frame.
+              const frame=Buffer.from(pending.subarray(0,used));used=0;yield frame;
+            }
+            const length=chunk.length-start;
+            if(used+length>ARCHIVE_LIMITS.transportBytes)throw new Error("STREAM_FRAME_TOO_LARGE");
+            pending.set(chunk.subarray(start),used);used+=length;
+          }
+          reading=false;if(used)throw new Error("STREAM_INCOMPLETE_FRAME");
+        }
+        output(await backupStreamFrames(frames(),resolve(root,values.output),key,options));
+      } else {
+        if(!values.input)throw new Error("STREAM_INPUT_REQUIRED");
+        if(command==="backup-stream-inspect")output(await inspectStreamBackup(resolve(root,values.input),key,options));
+        else {
+          if(!values.target)throw new Error("STREAM_RESTORE_TARGET_REQUIRED");
+          output(await restoreStreamNode(resolve(root,values.input),key,resolve(root,values.target),options));
+        }
+      }
+    }finally{reading=false;process.off("SIGINT",interrupt);process.off("SIGTERM",interrupt);}
+    return;
+  }
   if(command==="import-hosted-backup") {
     const controller=new AbortController();let reading=true;
     const interrupt=()=>{controller.abort();if(reading)process.stdin.destroy(new Error("HOSTED_IMPORT_INTERRUPTED"));};
@@ -114,7 +161,7 @@ async function main():Promise<void> {
     // instead uses its shared SQL contract with a genuinely read-only connection.
     const database=new Database(resolve(root,config.databasePath),{readonly:true,strict:true});
     try {
-      const report=operatingStudy(database as unknown as SqlDriver,{asOf:at,expectedIntervalMs:config.intervalMs,...(from===undefined?{}:{from})});
+      const report=(values.stream?streamingStudy:operatingStudy)(database as unknown as SqlDriver,{asOf:at,expectedIntervalMs:config.intervalMs,...(from===undefined?{}:{from})});
       if(destination)writeNew(destination,`${JSON.stringify(report,null,2)}\n`);
       output({kind:report.kind,privacy:report.privacy,reportSaved:destination!==null,asOf:report.asOf,
         window:report.window,complete:report.completeness.complete,dataScanComplete:report.completeness.dataScanComplete,
@@ -186,7 +233,7 @@ async function main():Promise<void> {
   }
   if(command==="providers"){output(collectorCatalog);return;}
   if(!["run","collect","status","replay","reproduce"].includes(command)) {
-    process.stdout.write("Blackwell Index node\n\nsetup [--dir PATH] [--providers oracle-public,azure-retail] [--peers https://NODE]\ncredentials COLLECTOR [ENV_NAME]   save one API key locally using hidden terminal input\nproviders              list supported adapters and key requirements\ncollect                collect real data once and sync peers\nrun                    serve API and collect continuously\nstatus                 inspect local counts, identity and readiness\nreplay --at EPOCH_MS    explore observations known at a historical time\nreproduce --sequence N reproduce an archived snapshot with its exact inputs and configuration\nstudy [--at EPOCH_MS] [--from EPOCH_MS] [--output PRIVATE_JSON]   inspect retained captures; stdout contains counts only\nbackup-keygen --output KEY_FILE\nbackup --key-file KEY_FILE --output BUNDLE_FILE\nbackup-inspect --key-file KEY_FILE --input BUNDLE_FILE\nrestore --key-file KEY_FILE --input BUNDLE_FILE --target NEW_DIRECTORY\nimport-hosted-backup --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --output BUNDLE_FILE   consume signed private export from stdin\n\nAll commands accept --dir and --config. No keys or synthetic prices are bundled. Recovery creates a new identity and blocks run/collect pending review.\n");return;
+    process.stdout.write("Blackwell Index node\n\nsetup [--dir PATH] [--providers oracle-public,azure-retail] [--peers https://NODE]\ncredentials COLLECTOR [ENV_NAME]   save one API key locally using hidden terminal input\nproviders              list supported adapters and key requirements\ncollect                collect real data once and sync peers\nrun                    serve API and collect continuously\nstatus                 inspect local counts, identity and readiness\nreplay --at EPOCH_MS    explore observations known at a historical time\nreproduce --sequence N reproduce an archived snapshot with its exact inputs and configuration\nstudy [--stream] [--at EPOCH_MS] [--from EPOCH_MS] [--output PRIVATE_JSON]   inspect retained captures; stdout contains counts only\nbackup-keygen --output KEY_FILE\nbackup --key-file KEY_FILE --output BUNDLE_FILE\nbackup-inspect --key-file KEY_FILE --input BUNDLE_FILE\nrestore --key-file KEY_FILE --input BUNDLE_FILE --target NEW_DIRECTORY\nimport-hosted-backup --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --output BUNDLE_FILE   consume signed private export from stdin\nimport-stream-backup --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --output BUNDLE_FILE   consume private V2 source frames from stdin\nbackup-stream-inspect --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --input BUNDLE_FILE\nrestore-stream --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --input BUNDLE_FILE --target NEW_DIRECTORY\n\nStreaming recovery accepts --max-archive-bytes. study --stream produces bounded private aggregates without point arrays.\nAll commands accept --dir and --config. No keys or synthetic prices are bundled. Recovery creates a new identity and blocks run/collect pending review.\n");return;
   }
   const {config,node,store}=load();
   if(command==="status") {output({nodeId:node.options.identity.nodeId,counts:store.counts(),coverage:store.captureCounts(),snapshot:node.snapshot(),history:store.verifyHistory()});store.close();return;}
@@ -217,4 +264,4 @@ async function main():Promise<void> {
   process.on("SIGTERM",stop);process.on("SIGINT",stop);
   await cycle();
 }
-main().catch(e=>{process.stderr.write(`${command==="import-hosted-backup"?"HOSTED_BACKUP_IMPORT_FAILED":e instanceof Error?e.message:"Command failed"}\n`);process.exitCode=1;});
+main().catch(e=>{process.stderr.write(`${["import-hosted-backup","import-stream-backup","backup-stream-inspect","restore-stream"].includes(command)?"HOSTED_BACKUP_IMPORT_FAILED":e instanceof Error?e.message:"Command failed"}\n`);process.exitCode=1;});

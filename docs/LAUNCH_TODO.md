@@ -24,8 +24,9 @@ This checklist is the completion contract for the public oracle. Software tests,
 | Pyth signer | Integration tested against official agent locally | Separate protected production key, relayer access, funded infrastructure if required by agreed terms |
 | Pyth consumer access | Not supplied | Hermes/Pro API account and appropriate public redistribution terms |
 | Onchain verification | Not performed | Select supported target chain, official upgraded contract, RPC and gas wallet; submit and inspect actual signed update |
-| Production operations | Live hosted exports encrypted and restored with 91 snapshots reproduced per node; see [acceptance record](HOSTED_ACCEPTANCE_2026-09-06.md) | Continue exact-revision checks; prioritize streaming archives because the measured export is already 6.4 MiB against an 8 MiB cap; assign offsite destination, separate key custodian, paging and retention owners; run a host-loss/rotation exercise |
-| Historical validation | Retained-data study implemented; 30-day qualification `NOT_ESTABLISHED` | Accumulate and review genuine consecutive coverage; obtain licensed historical records; no synthetic backfill or future membership look-ahead |
+| Production operations | V1 live restore verified; V2 streaming checkpoint, encrypted inspection/restore and bounded study implemented, with full-period and exact-release acceptance tracked separately | Finish [streaming acceptance](HOSTED_ACCEPTANCE_2026-09-06.md); confirm account storage/CPU limits; assign offsite destination, separate key custodian, paging and retention owners; run a host-loss/rotation exercise |
+| Restored-node ongoing backups | V2 creates a new disabled chunk-aware local node; original archive remains inspectable | Implement and test a local V2 re-backup path before activating the recovered node; V1 backup explicitly rejects the chunked representation |
+| Historical validation | Retained-data and bounded streaming studies implemented; 30-day qualification `NOT_ESTABLISHED` | Accumulate and review genuine consecutive coverage; obtain licensed historical records; no synthetic backfill or future membership look-ahead; capacity fixtures do not count as real history |
 | External audit and benchmark review | Internal independent code review and tests | Security assessment, methodology validation, legal/data-rights review and signed release decision |
 
 Do not paste API keys or private keys into issues or chat. Use `credentials`, environment variables, organization secret storage and deployment secret commands. Pyth admission details and provider agreements should be referenced by protected evidence records; private contracts do not belong in the public repository.
@@ -35,11 +36,11 @@ Do not paste API keys or private keys into issues or chat. Use `credentials`, en
 1. Name the legal benchmark operator, Pyth contact and authorized source-rights reviewer. Provide protected references to existing agreements, if any.
 2. Identify the organization secret manager or sign in to the relevant provider dashboards. The current Worker has no provider secrets configured. Start with AWS, Google and the providers where an account already exists; a new paid subscription is not automatically required or authorized.
 3. Confirm who will run independently administered nodes. Two nodes under this account are one operator, not two votes.
-4. Choose the offsite backup destination, separate key custodian and paging owner. [Hosted recovery tooling](HOSTED_RECOVERY.md) now supports private signed exports, local encrypted backups and restoration into a new disabled self-hosted identity. Deployed-revision verification, larger-journal archival and a real host-loss exercise remain acceptance work.
+4. Choose the offsite backup destination, separate key custodian and paging owner. [Hosted streaming recovery](STREAMING_RECOVERY.md) supports private signed checkpoints, local encrypted archives and restoration into a new disabled self-hosted identity. Exact deployed-revision capacity acceptance, ongoing backups for an activated restored node and a real host-loss exercise remain separate requirements.
 
 Use the [operating study](OPERATING_STUDY.md) to inspect retained private observations and dated gaps. It does not establish 30 consecutive days of qualified operation or authorize publication.
 
-The next capacity release must implement the complete [streaming recovery plan](STREAMING_RECOVERY_PLAN.md), including local inspection/restore and full-period study support. Raising export limits or completing only the download path is insufficient.
+The capacity release must pass the complete [streaming recovery plan](STREAMING_RECOVERY_PLAN.md), including local inspection/restore, full-period study support and actual-runtime acceptance. Raising export limits or completing only the download path is insufficient. A three-operator capacity result does not establish retention at the registry's maximum operator count.
 
 Continue research collection while these are unresolved. Do not enable public prices, Pyth submission or a financial-reference claim merely to make the dashboard look complete.
 

@@ -6,6 +6,8 @@ import { collectCycle } from "./collect";
 import { runtimeConfig, type WorkerEnvironment } from "./config";
 import { CloudflareJournal, DurableSqlDriver } from "./sql";
 import { createHostedExport } from "../hosted-export";
+import { beginCheckpoint, initializeCheckpointStorage, readCheckpointBlock, releaseCheckpoint, sealCheckpoint } from "../checkpoint";
+import { ARCHIVE_OPERATOR_ERRORS } from "../archive-protocol";
 
 const NODE_NAMES = ["primary", "secondary"] as const;
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
@@ -40,6 +42,7 @@ export class SbxNode extends DurableObject<WorkerEnvironment> {
       const admission = this.config.registry.operators.find(o => o.nodeId === this.identity.nodeId);
       if (admission && admission.operatorGroup !== this.config.operatorGroup) throw new Error("HOSTED_NODES_MUST_SHARE_OPERATOR_GROUP");
       this.journal = new CloudflareJournal(new DurableSqlDriver(ctx.storage));
+      initializeCheckpointStorage(this.journal);
       this.journal.saveConfiguration(this.config.registry);
       this.journal.saveConfiguration(this.config.methodology);
       this.node = new OracleNode({identity:this.identity,registry:this.config.registry,methodology:this.config.methodology,store:this.journal});
@@ -49,6 +52,11 @@ export class SbxNode extends DurableObject<WorkerEnvironment> {
 
   async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
+    if(path.startsWith("/internal/archive/")&&request.method==="POST"&&!new URL(request.url).search) {
+      const name=request.headers.get("x-sbx-recovery-node");
+      if(name!=="primary"&&name!=="secondary")return json({error:"UNKNOWN_NODE"},404);
+      return this.#archiveResponse(name,path.slice("/internal/archive/".length));
+    }
     if(path==="/internal/export-recovery"&&request.method==="POST") {
       const name=request.headers.get("x-sbx-recovery-node");
       if(name!=="primary"&&name!=="secondary")return json({error:"UNKNOWN_NODE"},404);
@@ -87,6 +95,33 @@ export class SbxNode extends DurableObject<WorkerEnvironment> {
   }
 
   /** Only the private internal binding route reaches this method; key/KV are never exported. */
+  #archiveResponse(nodeName:"primary"|"secondary",path:string):Response {
+    if(!this.release)return json({error:"ARCHIVE_RELEASE_REQUIRED"},409);
+    const source={nodeName,operatorGroup:this.config.operatorGroup,release:this.release};
+    try {
+      let result:unknown;
+      if(path==="begin") {
+        const collection=this.ctx.storage.kv.get<CollectionState>("collection:v1");
+        result=beginCheckpoint(this.journal,this.identity,{...source,network:this.config.network,intervalMs:this.config.intervalMs,
+          registry:this.config.registry,methodology:this.config.methodology},{collectionRunning:collection?.status==="RUNNING"});
+      } else {
+        const match=/^([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\/(block\/([0-9]{1,10})|seal|complete)$/.exec(path);
+        if(!match)return json({error:"NOT_FOUND"},404);
+        if(match[3]!==undefined)result=readCheckpointBlock(this.journal,this.identity,source,match[1]!,Number(match[3]));
+        else if(match[2]==="seal")result=sealCheckpoint(this.journal,this.identity,source,match[1]!);
+        else {
+          // Recheck source/release fencing before disposing only sealed staging.
+          sealCheckpoint(this.journal,this.identity,source,match[1]!);
+          releaseCheckpoint(this.journal,match[1]!,Date.now(),true);result={completed:true};
+        }
+      }
+      return new Response(JSON.stringify(result),{headers:{"content-type":"application/vnd.sbx.checkpoint+json","cache-control":"no-store"}});
+    } catch(error) {
+      const code=error instanceof Error?error.message:"";
+      return json({error:ARCHIVE_OPERATOR_ERRORS.some(allowed=>allowed===code)?code:"ARCHIVE_REQUEST_FAILED"},409);
+    }
+  }
+
   #exportRecovery(nodeName: "primary" | "secondary"): Response {
     if(!NODE_NAMES.includes(nodeName))throw new Error("UNKNOWN_NODE");
     const collection=this.ctx.storage.kv.get<CollectionState>("collection:v1");
@@ -102,10 +137,12 @@ export class SbxNode extends DurableObject<WorkerEnvironment> {
 export class RecoveryService extends WorkerEntrypoint<WorkerEnvironment> {
   async fetch(request:Request):Promise<Response> {
     const url=new URL(request.url),match=/^\/export\/(primary|secondary)$/.exec(url.pathname);
-    if(request.method!=="POST"||!match||url.search)return json({error:"NOT_FOUND"},404);
+    const archive=/^\/archive\/(primary|secondary)\/(begin|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\/(?:block\/[0-9]{1,10}|seal|complete))$/.exec(url.pathname);
+    if(request.method!=="POST"||(!match&&!archive)||url.search)return json({error:"NOT_FOUND"},404);
     // No request payload is consumed or interpreted; some Fetcher bridges supply an empty body stream.
-    const nodeName=match[1] as typeof NODE_NAMES[number];
-    return this.env.SBX_NODES.getByName(nodeName).fetch(new Request("https://node.internal/internal/export-recovery",{
+    const nodeName=(match??archive)![1] as typeof NODE_NAMES[number];
+    const path=archive?`/internal/archive/${archive[2]}`:"/internal/export-recovery";
+    return this.env.SBX_NODES.getByName(nodeName).fetch(new Request(`https://node.internal${path}`,{
       method:"POST",headers:{"x-sbx-recovery-node":nodeName},
     }));
   }

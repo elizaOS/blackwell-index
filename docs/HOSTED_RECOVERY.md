@@ -2,6 +2,8 @@
 
 The operator can export a hosted journal through a private Cloudflare service binding, verify its signed contents locally, and create an encrypted recovery bundle. Restoring that bundle creates a new, disabled self-hosted node. This is an operator tool, not a public API, a restore into a running Durable Object, or an offsite backup service.
 
+This page documents the original V1 format and its fixed limits. The [V2 streaming path](STREAMING_RECOVERY.md) supports bounded export, inspection and chunk-aware restore for larger journals. Check the acceptance record before assuming a given deployed revision includes it. V1 files remain readable; its limits have not been increased.
+
 ## Access and procedure
 
 Requirements: Node.js, Bun, frozen development dependencies, authorized Wrangler access to the Worker account, and a protected recovery key. The deployed Worker must include the `RecoveryService` entrypoint. No additional public password, provider credential, R2 account or GPU purchase is required.

@@ -14,6 +14,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
@@ -23,8 +26,22 @@ jobs:
         env:
           WRANGLER_SEND_METRICS: "false"
       - run: node scripts/verify-hosted-runtime.mjs
+      - run: node scripts/verify-hosted-capacity-runtime.mjs
       - run: docker build -t blackwell-index:verify .
       - run: sh scripts/docker-smoke.sh blackwell-index:verify
+  streaming-capacity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun scripts/verify-stream-capacity.ts
   pyth-protocol:
     runs-on: ubuntu-latest
     timeout-minutes: 30

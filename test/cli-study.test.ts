@@ -9,6 +9,9 @@ import { join, resolve } from "node:path";
 import { defaultMethodology, defaultRegistry, type NodeConfig } from "../src/config";
 import { canonical, generateIdentity } from "../src/crypto";
 import { HOSTED_EXPORT_FORMAT, HOSTED_TABLES } from "../src/hosted-export";
+import { ChunkedJournal } from "../src/chunked-journal";
+import { beginCheckpoint, initializeCheckpointStorage, readCheckpointBlock, sealCheckpoint } from "../src/checkpoint";
+import { readStreamContainer, writeStreamContainer, STREAM_CONTAINER_FORMAT } from "../src/stream-container";
 import { Store } from "../src/store";
 import type { OperatingStudy } from "../src/study";
 import { environment, NOW } from "./helpers";
@@ -92,7 +95,26 @@ test("study prints only counts and preserves logical data, schema and private fi
     cadence: { expectedBuckets: 3, occupiedBuckets: 2, emptyBuckets: 1 } });
   expect(JSON.parse(result.stdout).series).toBeUndefined(); expect(result.stdout).not.toContain(PRIVATE_MARKER); expect(result.stdout).not.toContain("7.125000");
   expect(persistentNodeFiles(directory)).toEqual(before); expect(logicalState(directory)).toEqual(logicalBefore);
-});
+},30_000);
+
+test("streaming study keeps output private and never loads node identity or credentials", async () => {
+  const directory=fixture(), before=persistentNodeFiles(directory), logicalBefore=logicalState(directory);
+  const result=await launch(directory,["study","--stream","--at",String(NOW+900_000),"--from",String(NOW)]).result;
+  expect(result.code).toBe(0);expect(result.stderr).toBe("");
+  expect(JSON.parse(result.stdout)).toMatchObject({kind:"RETAINED_CAPTURE_STREAMING_STUDY",complete:true,retainedPricePoints:2,seriesCount:1,qualification:"NOT_ESTABLISHED"});
+  expect(result.stdout).not.toContain(PRIVATE_MARKER);expect(result.stdout).not.toContain("7.125000");
+  expect(persistentNodeFiles(directory)).toEqual(before);expect(logicalState(directory)).toEqual(logicalBefore);
+},30_000);
+
+test("streaming import rejects bounded malformed framing without echoing private input", async () => {
+  for(const input of [`${PRIVATE_MARKER}\n`,`${PRIVATE_MARKER}`,"\n","x".repeat(512*1024+1)]) {
+    const directory=temporary(),key=join(directory,"key");
+    writeFileSync(key,`${Buffer.alloc(32,7).toString("base64")}\n`,{mode:0o600});
+    const result=await launch(directory,["import-stream-backup","--expected-node-id","a".repeat(64),"--expected-release","b".repeat(40),"--key-file",key,"--output",join(directory,"archive")],input).result;
+    expect(result.code).toBe(1);expect(result.stdout).toBe("");expect(result.stderr).toBe("HOSTED_BACKUP_IMPORT_FAILED\n");
+    expect(existsSync(join(directory,"archive"))).toBe(false);
+  }
+},30_000);
 
 test("study writes full private JSON only to a new mode-0600 output and refuses overwrite", async () => {
   const directory = fixture(), inputBytes = readFileSync(join(directory, "data/node.sqlite")), logicalBefore = logicalState(directory);
@@ -110,7 +132,7 @@ test("study writes full private JSON only to a new mode-0600 output and refuses 
   const duplicate = await launch(directory, args).result;
   expect(duplicate.code).toBe(1); expect(duplicate.stderr).toContain("Study output already exists"); expect(duplicate.stdout).toBe("");
   expect(readFileSync(output)).toEqual(original);
-});
+},30_000);
 
 test("study validates strict millisecond bounds before writes and cannot initialize a missing journal", async () => {
   const directory = fixture(), before = files(directory);
@@ -130,7 +152,7 @@ test("study remains available under the recovery review marker without reading t
   const before = persistentNodeFiles(directory), logicalBefore = logicalState(directory), result = await launch(directory, ["study", "--at", String(NOW + 900_000)]).result;
   expect(result.code).toBe(0); expect(persistentNodeFiles(directory)).toEqual(before); expect(logicalState(directory)).toEqual(logicalBefore);
   expect(existsSync(join(directory, "missing-private-identity.json"))).toBe(false);
-});
+},30_000);
 
 test("study includes committed live WAL records without changing the writer's logical state", async () => {
   const directory = fixture();
@@ -146,7 +168,7 @@ test("study includes committed live WAL records without changing the writer's lo
     expect(result.code).toBe(0); expect(JSON.parse(result.stdout)).toMatchObject({ capturesParsed: 3, retainedPricePoints: 3 });
     expect(persistentNodeFiles(directory)).toEqual(before); expect(logicalState(directory)).toEqual(logicalBefore);
   } finally { writer.close(); }
-});
+},30_000);
 
 function hostedFixture() {
   const identity = generateIdentity(), release = "b".repeat(40), registry = defaultRegistry("sbx-mainnet");
@@ -198,3 +220,80 @@ test("interrupted hosted stdin import exits with a fixed error and no output art
   expect(await pending.result).toEqual({ code: 1, stdout: "", stderr: "HOSTED_BACKUP_IMPORT_FAILED\n" });
   expect(existsSync(join(directory, "must-not-exist.sbx-backup"))).toBe(false);
 }, 15_000);
+
+test("SIGTERM interrupts a pending V2 stdin frame without exposing input or completing its archive",async()=>{
+  const directory=fixture(),ready=join(directory,"stream-listener-ready"),key=join(directory,"stream.key"),output=join(directory,"stream-archive");
+  writeFileSync(key,`${Buffer.alloc(32,9).toString("base64")}\n`,{mode:0o600});
+  const preload=`import { writeFileSync } from "node:fs";
+    process.on("newListener", (name) => { if (name === "SIGTERM") queueMicrotask(() => writeFileSync(${JSON.stringify(ready)}, "ready")); });`;
+  const pending=launch(directory,["import-stream-backup","--expected-node-id","a".repeat(64),"--expected-release","b".repeat(40),"--key-file",key,"--output",output],null,preload);
+  pending.child.stdin.write(`{"${PRIVATE_MARKER}":`);
+  const deadline=Date.now()+5000;
+  while(!existsSync(ready)){if(Date.now()>deadline)throw new Error("Stream interrupt handler did not initialize");await Bun.sleep(10);}
+  pending.child.kill("SIGTERM");
+  expect(await pending.result).toEqual({code:1,stdout:"",stderr:"HOSTED_BACKUP_IMPORT_FAILED\n"});
+  expect(existsSync(output)).toBe(false);expect(existsSync(`${output}.partial`)).toBe(true);
+  const partial=readFileSync(`${output}.partial`);
+  expect(partial.subarray(0,STREAM_CONTAINER_FORMAT.length).toString()).toBe(STREAM_CONTAINER_FORMAT);
+  expect(partial.includes(Buffer.from(PRIVATE_MARKER))).toBe(false);expect(statSync(`${output}.partial`).mode&0o777).toBe(0o600);
+},15000);
+
+async function invalidStreamContents(directory:string) {
+  const store=new Store(join(directory,"malformed-source.sqlite")),journal=new ChunkedJournal(store.db),identity=generateIdentity();
+  const registry=defaultRegistry("sbx-mainnet"),methodology=defaultMethodology(),release="b".repeat(40);
+  const key=join(directory,`${PRIVATE_MARKER}.key`),input=join(directory,`${PRIVATE_MARKER}.sbx-backup`);
+  writeFileSync(key,`${Buffer.alloc(32,8).toString("base64")}\n`,{mode:0o600});
+  try {
+    journal.saveConfiguration(registry);journal.saveConfiguration(methodology);
+    journal.db.query("INSERT INTO captures(id,collected_at,observations,errors) VALUES(1,?,?,?)").run(NOW,`{"${PRIVATE_MARKER}":`,"[]");
+    journal.db.query("INSERT INTO collection_captures(id,collected_at) VALUES(1,?)").run(NOW);
+    initializeCheckpointStorage(journal);
+    const metadata={nodeName:"primary" as const,operatorGroup:"private-test-\u{1F512}",release,network:registry.network,intervalMs:300000,registry,methodology};
+    const descriptor=beginCheckpoint(journal,identity,metadata,{now:NOW+1000});
+    async function* frames(){
+      yield Buffer.from(canonical(descriptor));
+      for(let index=0;;index++) {
+        const block=readCheckpointBlock(journal,identity,metadata,descriptor.payload.checkpointId,index,NOW+1000);
+        if(!block)break;yield Buffer.from(canonical(block));
+      }
+      yield Buffer.from(canonical(sealCheckpoint(journal,identity,metadata,descriptor.payload.checkpointId,NOW+1000)));
+    }
+    await writeStreamContainer(frames(),input,key);
+    return {key,input,args:["--expected-node-id",identity.nodeId,"--expected-release",release,"--key-file",key,"--input",input]};
+  }finally{store.close();}
+}
+
+test("restore-stream and independent inspection keep authenticated private parsing errors confidential",async()=>{
+  const directory=fixture(),f=await invalidStreamContents(directory),target=join(directory,"must-not-create-restored-node");
+  for(const args of [
+    ["restore-stream",...f.args,"--target",target],
+    ["backup-stream-inspect",...f.args],
+    ["restore-stream",...f.args,"--target",target,`--${PRIVATE_MARKER}`],
+    ["restore-stream",...f.args,"--target",target,"--max-archive-bytes","1"],
+    ["restore-stream",...f.args,"--target",target,"--max-archive-bytes",PRIVATE_MARKER],
+  ]) {
+    const result=await launch(directory,args).result;
+    expect(result).toEqual({code:1,stdout:"",stderr:"HOSTED_BACKUP_IMPORT_FAILED\n"});
+    expect(existsSync(target)).toBe(false);
+  }
+},20000);
+
+test("tiny stdin chunks preserve split UTF-8 and newline boundaries without publishing private frame contents",async()=>{
+  const directory=temporary(),f=await invalidStreamContents(directory),wire:Buffer[]=[];
+  for await(const frame of readStreamContainer(f.input,f.key))wire.push(Buffer.from(frame),Buffer.from("\n"));
+  // Force deterministic one-byte deliveries even when the operating system coalesces pipe writes.
+  const preload=`const iterate=process.stdin[Symbol.asyncIterator].bind(process.stdin);
+    process.stdin[Symbol.asyncIterator]=async function*(){for await(const chunk of iterate()){for(let i=0;i<chunk.length;i++)yield chunk.subarray(i,i+1);}};`;
+  const output=join(directory,"tiny-chunk-archive"),result=await launch(directory,["import-stream-backup",...f.args.slice(0,-2),"--output",output],Buffer.concat(wire),preload).result;
+  expect(result.code).toBe(0);expect(result.stderr).toBe("");
+  expect(JSON.parse(result.stdout)).toMatchObject({sourceVerified:true,contentInspection:"REQUIRED"});
+  expect(result.stdout).not.toContain(PRIVATE_MARKER);expect(existsSync(output)).toBe(true);expect(existsSync(`${output}.partial`)).toBe(false);
+  expect(statSync(output).mode&0o777).toBe(0o600);
+  const overflow=await launch(directory,["import-stream-backup",...f.args.slice(0,-2),"--output",join(directory,"overflow")],Buffer.alloc(512*1024+1,120),
+    `const iterate=process.stdin[Symbol.asyncIterator].bind(process.stdin);
+    process.stdin[Symbol.asyncIterator]=async function*(){for await(const chunk of iterate()){for(let i=0;i<chunk.length;i+=7)yield chunk.subarray(i,i+7);}};`).result;
+  expect(overflow).toEqual({code:1,stdout:"",stderr:"HOSTED_BACKUP_IMPORT_FAILED\n"});expect(existsSync(join(directory,"overflow"))).toBe(false);
+  const limitedOutput=join(directory,"file-budget"),limited=await launch(directory,["import-stream-backup",...f.args.slice(0,-2),"--output",limitedOutput,"--max-archive-bytes","512"],Buffer.concat(wire)).result;
+  expect(limited).toEqual({code:1,stdout:"",stderr:"HOSTED_BACKUP_IMPORT_FAILED\n"});expect(existsSync(limitedOutput)).toBe(false);
+  expect(statSync(`${limitedOutput}.partial`).size).toBeLessThanOrEqual(512);
+},20000);

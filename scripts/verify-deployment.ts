@@ -148,7 +148,8 @@ async function main(): Promise<void> {
     })),
   ];
   const privatePaths = ["/internal/wake", "/internal/", "/v1/evidence", "/v1/captures", "/data/credentials.json", "/data/node-identity.json", "/data/node.sqlite", "/.env", "/config/node.local.json", "/node/unapproved/v1/status",
-    "/exportRecovery", "/v1/exportRecovery", "/internal/exportRecovery", "/v1/recovery", "/node/primary/exportRecovery", "/internal/export-recovery", "/node/primary/internal/export-recovery"];
+    "/exportRecovery", "/v1/exportRecovery", "/internal/exportRecovery", "/v1/recovery", "/node/primary/exportRecovery", "/internal/export-recovery", "/node/primary/internal/export-recovery",
+    "/internal/archive/begin", "/node/primary/internal/archive/begin"];
   for (const base of [index, altx, primary, secondary]) for (const path of privatePaths) tasks.push(() => check(`private route ${base.origin}${path}`, async () => {
     // Do not read, print or persist a body from a route that must remain private.
     const response = await request(new URL(path, base), false);
@@ -156,7 +157,7 @@ async function main(): Promise<void> {
     privateRoutesChecked++; deniedStatuses[String(response.status)] = (deniedStatuses[String(response.status)] ?? 0) + 1;
   }));
   // The internal export accepts POST, so GET denial alone does not prove its public isolation.
-  for(const base of [index,altx,primary,secondary])for(const path of ["/internal/export-recovery","/node/primary/internal/export-recovery"])
+  for(const base of [index,altx,primary,secondary])for(const path of ["/internal/export-recovery","/node/primary/internal/export-recovery","/internal/archive/begin","/node/primary/internal/archive/begin"])
     tasks.push(()=>check(`private POST ${base.origin}${path}`,async()=>{
       const response=await request(new URL(path,base),false,"POST");
       requireValue([401,403,404,405,410].includes(response.status),`Private POST returned HTTP ${response.status}; expected explicit denial or absence`);

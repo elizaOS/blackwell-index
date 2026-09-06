@@ -51,7 +51,17 @@ Each restored journal contained 5,476 real observations across 64 distinct sourc
 
 The primary's retained span was about 7.38 hours. At each study's actual cutoff there were no empty completed cadence buckets. This is a short scheduling diagnostic, not provider uptime, market representativeness, price accuracy, liquidity, returns or hedge effectiveness. Verda began later in the retained history: Oracle and Azure appeared in 89 captures, Verda in 79. No missing data was filled or backdated. Thirty-day qualification remains `NOT_ESTABLISHED`.
 
-## Outstanding requirements
+## V2 implementation acceptance in progress
+
+The streaming implementation has passed local checkpoint, container, restore, CLI privacy and study checks. The actual-workerd fixture passed with 512 signed candidates at the exact 16 MiB candidate ceiling, a 700,031-byte evidence object split across two chunks, 1,100 observations in two storage batches, and 75 bounded blocks. It verified frozen mutable state, a byte-identical retry after object eviction, encrypted inspection/restore, unchanged source identity and counter changes only from the fixture's explicit mutation. No provider or external requests occurred. Runtime was 28,551 ms; this is a bounded workload result, not a per-isolate peak-memory measurement or account-plan guarantee.
+
+The initial local full-period fixture completed build, export and independent inspection: 8,929 collection cycles, 571,456 captured observations, 26,787 reports from three fixture operators, and 8,929 snapshots. Reports contain twelve quotes each; raw captures contain 64. Changing evidence totaled 220,259,758 bytes. Source database size was 816,640,000 bytes and the encrypted archive was 1,205,313,732 bytes. All 8,929 snapshots were reproduced during independent inspection. A post-checkpoint collection remained on the source and was excluded from the checkpoint, including its counter increments.
+
+The local export used 3,418 blocks with fourteen verified retries. Its encrypted archive SHA-256 was `f1b531a549d7902970c137f3c0f5e10612f86e9ba29ddf9160d013acb907456c`. Fresh-process peak RSS was 265,994,240 bytes for fixture generation, 379,158,528 for export and 227,573,760 for inspection, all under the explicit 384 MiB **local-process** budget. These numbers do not claim compliance with Cloudflare's separate isolate-memory ceiling. Membership bootstrap took 2,847.5 ms and checkpoint begin 182.8 ms on local SQLite; those are not Cloudflare CPU measurements.
+
+Full-period restore and study, terminal hosted CI at the exact revision, and live V2 drills on both nodes remain pending at this checkpoint. No V2 release is claimed deployed here. Later exact-revision acceptance must supersede this partial record. Fixtures are isolated synthetic capacity data and do not add any genuine operating history, source rights or publication readiness.
+
+## Remaining launch work
 
 The primary signed logical export was 6,600,693 bytes against an 8,388,608-byte cap; the later 91-cycle export was 6,751,809 bytes. Larger-journal streaming/archive support is an immediate capacity task, not an optional long-term enhancement. The [streaming recovery plan](STREAMING_RECOVERY_PLAN.md) covers checkpoint consistency, bounded transfer, encryption, full restore and the study's separate observation limit. Do not delete retained evidence or counters to fit the cap. No sustained recovery capacity is claimed.
 

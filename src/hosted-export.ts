@@ -10,7 +10,9 @@ export const HOSTED_EXPORT_FORMAT = "SBX_HOSTED_JOURNAL_V1";
 export const HOSTED_EXPORT_LIMITS = {bytes:8*1024*1024,rows:100_000} as const;
 const domain = `${HOSTED_EXPORT_FORMAT}\n`;
 // workerd's KV includes the private signer. Never select its rows or serialize its schema.
-const internalTables = new Set(["_cf_KV","_cf_METADATA","__miniflare_do_name"]);
+export const HOSTED_INTERNAL_TABLES = new Set(["_cf_KV","_cf_METADATA","__miniflare_do_name"]);
+// Exact private V2 operational table names; unknown archive_* names still require review.
+export const ARCHIVE_INTERNAL_TABLES = new Set(["archive_schema","archive_entries","archive_checkpoints","archive_frozen_counters","archive_frozen_candidates","archive_frozen_schedules","archive_blocks"]);
 export const HOSTED_TABLES = [
   {name:"counters",columns:["id","value"],order:"id"},
   {name:"reports",columns:["hash","node_id","sequence","received_at","payload"],order:"node_id,sequence"},
@@ -34,7 +36,7 @@ const scheduleTime = natural.max(8_640_000_000_000_000);
 const textCell = z.string().max(HOSTED_EXPORT_LIMITS.bytes);
 const blobCell = z.object({base64:textCell}).strict();
 // SQLite affinity does not enforce a column's declared type. Validate every exported cell.
-const rowSchemas:Record<(typeof HOSTED_TABLES)[number]["name"],z.ZodType> = {
+export const hostedRowSchemas:Record<(typeof HOSTED_TABLES)[number]["name"],z.ZodType> = {
   counters:z.tuple([digest,positive]),
   reports:z.tuple([digest,digest,positive,timestamp,textCell]),
   candidates:z.tuple([digest,positive,timestamp,digest,textCell,natural]),
@@ -58,7 +60,7 @@ const envelopeSchema = z.object({payload:z.object({format:z.literal(HOSTED_EXPOR
 }).strict(),signature:z.string().length(88)}).strict();
 export type HostedExport = z.infer<typeof envelopeSchema>;
 
-function encodeCell(value:unknown):z.infer<typeof cell> {
+export function encodeHostedCell(value:unknown):z.infer<typeof cell> {
   if(value instanceof ArrayBuffer)return {base64:Buffer.from(value).toString("base64")};
   if(ArrayBuffer.isView(value))return {base64:Buffer.from(value.buffer,value.byteOffset,value.byteLength).toString("base64")};
   return cell.parse(value);
@@ -69,7 +71,7 @@ export function createHostedExport(journal:Journal,identity:NodeIdentity,metadat
   if(!Number.isSafeInteger(maximumBytes)||maximumBytes<1||maximumBytes>HOSTED_EXPORT_LIMITS.bytes)throw new Error("INVALID_EXPORT_LIMIT");
   const payload = journal.db.transaction(() => {
     const names=(journal.db.query("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[]).map(row=>row.name);
-    if(names.some(name=>!HOSTED_TABLES.some(table=>table.name===name)&&!name.startsWith("sqlite_")&&!internalTables.has(name)))throw new Error("HOSTED_EXPORT_SCHEMA_REVIEW_REQUIRED");
+    if(names.some(name=>!HOSTED_TABLES.some(table=>table.name===name)&&!name.startsWith("sqlite_")&&!HOSTED_INTERNAL_TABLES.has(name)&&!ARCHIVE_INTERNAL_TABLES.has(name)))throw new Error("HOSTED_EXPORT_SCHEMA_REVIEW_REQUIRED");
     let bytes=0,rows=0;
     const tables=HOSTED_TABLES.map(table=>{
       const values:z.infer<typeof cell>[][]=[];
@@ -79,8 +81,8 @@ export function createHostedExport(journal:Journal,identity:NodeIdentity,metadat
         const columns=(journal.db.query(`PRAGMA table_info(${table.name})`).all() as {name:string}[]).map(column=>column.name);
         if(canonical(columns)!==canonical(table.columns))throw new Error("HOSTED_EXPORT_SCHEMA_REVIEW_REQUIRED");
         for(const row of journal.db.query(`SELECT ${table.columns.join(",")} FROM ${table.name} ORDER BY ${table.order}`).iterate() as Iterable<Record<string,unknown>>) {
-          const value=table.columns.map(column=>encodeCell(row[column]));
-          if(!rowSchemas[table.name].safeParse(value).success)throw new Error("HOSTED_EXPORT_CELL_DOMAIN_MISMATCH");
+          const value=table.columns.map(column=>encodeHostedCell(row[column]));
+          if(!hostedRowSchemas[table.name].safeParse(value).success)throw new Error("HOSTED_EXPORT_CELL_DOMAIN_MISMATCH");
           bytes+=Buffer.byteLength(canonical(value));rows++;
           if(bytes>maximumBytes||rows>HOSTED_EXPORT_LIMITS.rows)throw new Error("HOSTED_EXPORT_LIMIT_REQUIRES_STREAMING_ARCHIVE");
           values.push(value);
@@ -112,7 +114,7 @@ export function parseHostedExport(encoded:string,expectedNodeId:string,expectedR
     if(table.name!==expected.name||canonical(table.columns)!==canonical(expected.columns))throw new Error("HOSTED_EXPORT_SCHEMA_MISMATCH");
     for(const row of table.rows) {
       if(row.length!==expected.columns.length||++rows>HOSTED_EXPORT_LIMITS.rows)throw new Error("HOSTED_EXPORT_ROW_MISMATCH");
-      if(!rowSchemas[expected.name].safeParse(row).success)throw new Error("HOSTED_EXPORT_CELL_DOMAIN_MISMATCH");
+      if(!hostedRowSchemas[expected.name].safeParse(row).success)throw new Error("HOSTED_EXPORT_CELL_DOMAIN_MISMATCH");
       for(const [column,value] of row.entries()) {
         if(typeof value==="object"&&value!==null) {
           if(expected.columns[column]!=="body"||Buffer.from(value.base64,"base64").toString("base64")!==value.base64)throw new Error("HOSTED_EXPORT_BLOB_MISMATCH");

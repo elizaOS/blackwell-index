@@ -10,6 +10,7 @@ Run from the code checkout containing `src/cli.ts`; use `--dir` when the initial
 
 ```sh
 bun src/cli.ts study --dir /absolute/node/path
+bun src/cli.ts study --stream --dir /absolute/node/path --output data/streaming-study.json
 bun src/cli.ts study --dir /absolute/node/path --at 1788739200000 \
   --from 1788652800000 --output data/operating-study.json
 ```
@@ -23,6 +24,10 @@ Study uses a read-only SQLite connection, does not initialize a missing journal,
 Read-only describes database operations, not an absence of every filesystem change: SQLite may create or update WAL/SHM reader-coordination sidecars while opening a live journal. The study preserves journal records, schema, main-database permissions and private configuration files. It reads committed WAL data; it does not use SQLite's immutable mode, which is inappropriate for a journal that can still change.
 
 ## Interface
+
+For full-period or chunked restored journals, use `--stream` / `streamingStudy` in `src/stream-study.ts`. It processes bounded metadata pages and one capture payload at a time, retaining per-series aggregates rather than point arrays. It counts hosted collection markers separately from physical batches and rejects ambiguous window-local cycle mapping. The same source/term, knowledge-cutoff, anomaly and exact-decimal rules apply. Output remains private and qualification remains `NOT_ESTABLISHED`.
+
+Streaming defaults are 100,000 physical capture rows, 2,000,000 observations, 4 GiB cumulative input, 1,000 series and 100 samples. Library maxima are 2,000,000 rows, 10,000,000 observations, 16 GiB input, 2,000 series and 1,000 samples; the one-row ceiling remains 4 MiB. These bound work, not promised calendar coverage. Incomplete scans are explicit. The original point-detail interface below retains its smaller limits for compatibility.
 
 `operatingStudy(journalOrSqlDriver, options)` in `src/study.ts` runs synchronous read-only SQL queries in one driver transaction. It accepts an existing `Journal`, or its `SqlDriver`, and returns a JSON-serializable report. It does not open files, create tables, read credentials, or make network requests. The caller controls the database connection and whether the private report is displayed or saved.
 

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { canonical, hash, verifyBatch } from "./crypto";
 import type { EvidenceRecord, Observation, SignedBatch, Snapshot } from "./types";
 import { signedBatchSchema } from "./validation";
+import { ARCHIVE_TABLES } from "./archive-protocol";
 
 export const JOURNAL_LIMITS = Object.freeze({
   candidateIdentities: 512, candidateBytes: 256 * 1024, candidatesTotalBytes: 16 * 1024 * 1024,
@@ -33,11 +34,25 @@ export interface SqlDriver {
   transaction<T>(fn:()=>T):()=>T;
   close():void;
 }
+const immutableNames=ARCHIVE_TABLES.filter(table=>!table.mutable).map(table=>table.name).join("|");
+const immutableSqlName=`(?:(?:main|"main")\\s*\\.\\s*)?["\x60\\[]?(?:${immutableNames})\\b`;
+const immutableMutation=new RegExp(`\\b(?:UPDATE(?:\\s+OR\\s+(?:ROLLBACK|ABORT|REPLACE|FAIL|IGNORE))?|DELETE\\s+FROM|REPLACE\\s+INTO|INSERT\\s+OR\\s+REPLACE\\s+INTO|DROP\\s+TABLE(?:\\s+IF\\s+EXISTS)?|ALTER\\s+TABLE)\\s+${immutableSqlName}`,"i");
+const immutableUpsert=new RegExp(`\\bINSERT\\s+(?:OR\\s+\\w+\\s+)?INTO\\s+${immutableSqlName}[\\s\\S]*\\bDO\\s+UPDATE\\b`,"i");
+function immutableWrite(sql:string):boolean {
+  // SQL text is application-owned. Compute once per prepared statement, never per row.
+  return /\b(?:UPDATE|DELETE|REPLACE|DROP|ALTER)\b/i.test(sql)&&(immutableMutation.test(sql)||immutableUpsert.test(sql));
+}
 /** Shared journal for Bun SQLite and Durable Object SQLite drivers. */
 export class Journal {
   readonly db: SqlDriver;
+  private archiveRegistration = false;
   constructor(database:SqlDriver) {
-    this.db=database;
+    // Reviewed application write boundary, not an SQL authorization boundary. The raw
+    // runtime/database handle must not be used to mutate a checkpoint-enabled journal.
+    const guard=(forbidden:boolean)=>{if(this.archiveRegistration&&forbidden)throw new Error("ARCHIVE_IMMUTABLE_MUTATION_REJECTED");};
+    this.db={exec:sql=>{guard(immutableWrite(sql));return database.exec(sql);},query:sql=>{
+      const forbidden=immutableWrite(sql),statement=database.query(sql);return {run:(...values)=>{guard(forbidden);return statement.run(...values);},get:(...values)=>{guard(forbidden);return statement.get(...values);},all:(...values)=>{guard(forbidden);return statement.all(...values);},iterate:(...values)=>{guard(forbidden);return statement.iterate(...values);}};
+    },transaction:fn=>database.transaction(fn),close:()=>database.close()};
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS counters (id TEXT PRIMARY KEY, value INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS reports (hash TEXT PRIMARY KEY, node_id TEXT NOT NULL, sequence INTEGER NOT NULL, received_at INTEGER NOT NULL, payload TEXT NOT NULL, UNIQUE(node_id, sequence));
@@ -50,6 +65,15 @@ export class Journal {
       CREATE TABLE IF NOT EXISTS snapshots (id INTEGER PRIMARY KEY, calculated_at INTEGER NOT NULL, hash TEXT UNIQUE NOT NULL, previous_hash TEXT, payload TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS configurations (hash TEXT PRIMARY KEY, payload TEXT NOT NULL);
     `);
+  }
+  /** Called only after the versioned membership migration is complete. */
+  enableArchiveRegistration():void {this.archiveRegistration=true;}
+  /** Must share the surrounding immutable INSERT transaction, including exclusions. */
+  registerArchiveRow(tableName:string,keyText:string,keyInteger:number):void {
+    if(!this.archiveRegistration)return;
+    const table=ARCHIVE_TABLES.find(table=>table.name===tableName);
+    if(!table||table.mutable||!Number.isSafeInteger(keyInteger)||keyInteger<0)throw new Error("ARCHIVE_MEMBERSHIP_KEY_INVALID");
+    this.db.query("INSERT OR IGNORE INTO archive_entries(table_code,key_text,key_integer) VALUES(?,?,?)").run(table.code,keyText,keyInteger);
   }
   close(): void { this.db.close(); }
   nextSequence(nodeId: string): number {
@@ -94,6 +118,7 @@ export class Journal {
       const count = this.db.query("SELECT COUNT(*) AS count FROM reports").get() as {count:number};
       if (count.count >= JOURNAL_LIMITS.reportRows) throw new Error("JOURNAL_CAPACITY_ARCHIVE_REQUIRED");
       this.db.query("INSERT INTO reports(hash,node_id,sequence,received_at,payload) VALUES(?,?,?,?,?)").run(digest,p.nodeId,p.sequence,now,serialized);
+      this.registerArchiveRow("reports",digest,0);
       // Admission never resets the candidate's nonce, and its old observations do not enter historical replay.
       this.db.query("DELETE FROM candidates WHERE node_id=?").run(p.nodeId);
       return "ACCEPTED";
@@ -113,13 +138,17 @@ export class Journal {
     if(!Number.isSafeInteger(now)||now<=0) throw new Error("INVALID_PROOF_RECEIPT_TIME");
     const p=proof.first.payload;
     // Exclusion remains durable even when the bounded full-proof archive needs operator attention.
-    this.db.query("INSERT OR IGNORE INTO equivocations(node_id,detected_at,conflicting_payload) VALUES(?,?,?)").run(p.nodeId,now,canonical({sequence:p.sequence,first:hash(proof.first),second:hash(proof.second)}));
+    this.db.transaction(()=>{
+      this.db.query("INSERT OR IGNORE INTO equivocations(node_id,detected_at,conflicting_payload) VALUES(?,?,?)").run(p.nodeId,now,canonical({sequence:p.sequence,first:hash(proof.first),second:hash(proof.second)}));
+      this.registerArchiveRow("equivocations",p.nodeId,0);
+    })();
     return this.db.transaction(()=>{
       if(this.db.query("SELECT id FROM equivocation_proofs WHERE node_id=?").get(p.nodeId)) return "DUPLICATE";
       const first=canonical(proof.first),second=canonical(proof.second),bytes=Buffer.byteLength(first)+Buffer.byteLength(second);
       const usage=this.db.query("SELECT COUNT(*) AS count,COALESCE(SUM(payload_bytes),0) AS bytes FROM equivocation_proofs").get() as {count:number;bytes:number};
       if(usage.count>=JOURNAL_LIMITS.proofRows||usage.bytes+bytes>JOURNAL_LIMITS.proofsTotalBytes) throw new Error("EQUIVOCATION_PROOF_CAPACITY_ARCHIVE_REQUIRED");
       this.db.query("INSERT INTO equivocation_proofs(node_id,detected_at,first_payload,second_payload,payload_bytes) VALUES(?,?,?,?,?)").run(p.nodeId,now,first,second,bytes);
+      this.registerArchiveRow("equivocation_proofs","",(this.db.query("SELECT id FROM equivocation_proofs WHERE node_id=?").get(p.nodeId) as {id:number}).id);
       return "RECORDED";
     })();
   }
@@ -146,23 +175,33 @@ export class Journal {
   }
   async archive(record: EvidenceRecord): Promise<void> {
     if (createHash("sha256").update(record.body).digest("hex") !== record.hash) throw new Error("Evidence digest mismatch");
-    this.db.query("INSERT OR IGNORE INTO evidence(hash,source,url,received_at,content_type,body) VALUES(?,?,?,?,?,?)").run(record.hash,record.source,record.url,record.receivedAt,record.contentType,record.body);
+    this.db.transaction(()=>{
+      this.db.query("INSERT OR IGNORE INTO evidence(hash,source,url,received_at,content_type,body) VALUES(?,?,?,?,?,?)").run(record.hash,record.source,record.url,record.receivedAt,record.contentType,record.body);
+      this.registerArchiveRow("evidence",record.hash,0);
+    })();
   }
   capture(observations: Observation[], errors: string[], now: number): void {
-    this.db.query("INSERT INTO captures(collected_at,observations,errors) VALUES(?,?,?)").run(now,canonical(observations),canonical(errors));
+    this.db.transaction(()=>{
+      this.db.query("INSERT INTO captures(collected_at,observations,errors) VALUES(?,?,?)").run(now,canonical(observations),canonical(errors));
+      this.registerArchiveRow("captures","",(this.db.query("SELECT last_insert_rowid() AS id").get() as {id:number}).id);
+    })();
   }
   snapshot(snapshot: Snapshot): string {
     return this.db.transaction(() => {
       const previous = this.db.query("SELECT hash FROM snapshots ORDER BY id DESC LIMIT 1").get() as {hash:string}|null;
       const digest = hash({ previousHash: previous?.hash ?? null, snapshot });
       this.db.query("INSERT INTO snapshots(calculated_at,hash,previous_hash,payload) VALUES(?,?,?,?)").run(snapshot.calculatedAt,digest,previous?.hash ?? null,canonical(snapshot));
+      this.registerArchiveRow("snapshots","",(this.db.query("SELECT id FROM snapshots WHERE hash=?").get(digest) as {id:number}).id);
       return digest;
     })();
   }
   saveConfiguration(value:unknown):string {
     const payload=canonical(value),digest=hash(value);
     if(Buffer.byteLength(payload)>1_000_000) throw new Error("CONFIGURATION_TOO_LARGE");
-    this.db.query("INSERT OR IGNORE INTO configurations(hash,payload) VALUES(?,?)").run(digest,payload);
+    this.db.transaction(()=>{
+      this.db.query("INSERT OR IGNORE INTO configurations(hash,payload) VALUES(?,?)").run(digest,payload);
+      this.registerArchiveRow("configurations",digest,0);
+    })();
     return digest;
   }
   configuration(digest:string):unknown|null {

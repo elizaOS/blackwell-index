@@ -1,6 +1,6 @@
 # Streaming recovery implementation plan
 
-Status: proposed, not implemented. Reviewed against the repository and Cloudflare documentation on September 6, 2026. This plan replaces the total-size-dependent recovery path; it does not change publication eligibility or authorize a paid service.
+Status: implementation and acceptance in progress. The checkpoint, bounded encrypted container, chunk-aware restore and streaming study are implemented; the full-period and exact-release gates below remain explicit. See [operator instructions](STREAMING_RECOVERY.md) and the [acceptance record](HOSTED_ACCEPTANCE_2026-09-06.md). This plan does not change publication eligibility or authorize a paid service.
 
 ## Decision
 

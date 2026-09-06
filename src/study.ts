@@ -46,14 +46,14 @@ function timestamp(value: number): number {
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error("Invalid operating study time");
   return value;
 }
-function terms(observation: Observation): Terms {
+export function studyTerms(observation: Observation): Terms {
   return { provider: observation.provider, source: observation.source, model: observation.model, sku: observation.sku, region: observation.region,
     procurement: observation.procurement, priceBasis: observation.priceBasis, tenancy: observation.tenancy, gpuCount: observation.gpuCount,
     includes: [...observation.includes].sort(), priceScope: observation.priceScope ?? "PUBLIC", topology: observation.topology ?? "UNKNOWN",
     minimumOrderGpuCount: observation.minimumOrderGpuCount ?? null, currency: observation.currency, unit: observation.unit };
 }
 /** Signed basis-point change, rounded half away from zero to four decimals. */
-function changeBps(first: bigint, last: bigint): string {
+export function studyChangeBps(first: bigint, last: bigint): string {
   const numerator = (last - first) * 100_000_000n;
   const absolute = numerator < 0n ? -numerator : numerator;
   const value = (absolute + first / 2n) / first;
@@ -136,7 +136,7 @@ export function operatingStudy(input: Pick<Journal, "db"> | SqlDriver, options: 
         validObservations++;
         firstObservationAt = Math.min(firstObservationAt ?? observation.observedAt, observation.observedAt);
         lastObservationAt = Math.max(lastObservationAt ?? observation.observedAt, observation.observedAt);
-        const commercialTerms = terms(observation), id = hash(commercialTerms);
+        const commercialTerms = studyTerms(observation), id = hash(commercialTerms);
         let item = series.get(id);
         if (!item) {
           if (series.size >= limits.maxSeries) { reasons.add("SERIES_LIMIT"); dataScanComplete = false; continue; }
@@ -189,7 +189,7 @@ export function operatingStudy(input: Pick<Journal, "db"> | SqlDriver, options: 
         firstKnownAt: first.knownAt, lastKnownAt: last.knownAt, firstObservedAt: first.observedAt, lastObservedAt: last.observedAt,
         firstPrice: first.price, lastPrice: last.price, minimumPrice: fromMicros(minimum), maximumPrice: fromMicros(maximum),
         issues: [...item.issues].sort(), points: item.points,
-        sensitivity: { status: sensitivityStatus, firstToLastChangeBps: sensitivityStatus === "DATED_CHANGE_ONLY" ? changeBps(prices[0]!, prices.at(-1)!) : null,
+        sensitivity: { status: sensitivityStatus, firstToLastChangeBps: sensitivityStatus === "DATED_CHANGE_ONLY" ? studyChangeBps(prices[0]!, prices.at(-1)!) : null,
           elapsedKnowledgeMs: last.knownAt - first.knownAt, elapsedObservationMs: last.observedAt - first.observedAt } };
     });
     const observedSpanMs = window.first === null || window.last === null ? 0 : window.last - window.first;
