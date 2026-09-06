@@ -222,7 +222,7 @@ export async function readbackTick(options:PythReadbackTickOptions,dependencies:
         const timer=setTimeout(abort,timeout());
         try {
           if(options.signal?.aborted)fail('ABORTED');
-          const verified=await verifyPythEvmUpdate({update:(wire as {data?:unknown}).data,...config.signedEvm,signal:controller.signal},{fetch:request,now,requestTimeoutMs:Math.min(config.requestTimeoutMs,5000)});
+          const verified=await verifyPythEvmUpdate({update:(wire as {data?:unknown}).data,...config.signedEvm,signal:controller.signal},{fetch:request,now,requestTimeoutMs:Math.min(config.requestTimeoutMs,5000),responseBudget:budget});
           if(verified.status!=='CONTRACT_ACCEPTED'||!verified.payloadHex)fail('SIGNED_VERIFICATION_FAILED');
           const decoded=decodeSbxEvmPayload(verified.payloadHex);
           if(decoded.channel!==config.channel)fail('CHANNEL_MISMATCH');

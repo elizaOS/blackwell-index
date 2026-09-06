@@ -101,6 +101,47 @@ test('switching an existing unsigned watermark database to signed mode requires 
   expect(report.code).toBe('STATE_SCOPE_REVIEW_REQUIRED');expect(f.requests).toHaveLength(count);
 });
 
+test('signed verification rechecks approval after the RPC returns',async()=>{
+  const f=signedFixture();(f.options.manifest as PythManifest).approval.expiresAt=NOW+1000;
+  const request=f.deps.fetch!;
+  f.deps.fetch=(async(input,init)=>{
+    const response=await request(input,init);
+    if(String(input)!==PYTH_LATEST_PRICE_URL&&init?.body&&JSON.parse(String(init.body)).id===102)f.setTime(NOW+1001);
+    return response;
+  }) as typeof fetch;
+  const report=await readbackTick(f.options,f.deps);
+  expect(report.code).toBe('APPROVAL_EXPIRED');expect(report.state?.feeds).toEqual([]);
+  expect(report.signatureVerification).toBe('NOT_PERFORMED');
+});
+
+test('late signed verification cannot accept stale early batch timestamps',async()=>{
+  const f=signedFixture(),request=f.deps.fetch!;let verified=0;
+  f.deps.fetch=(async(input,init)=>{
+    const response=await request(input,init);
+    if(String(input)!==PYTH_LATEST_PRICE_URL&&init?.body&&JSON.parse(String(init.body)).id===102&&++verified===2)f.setTime(NOW+31000);
+    return response;
+  }) as typeof fetch;
+  const report=await readbackTick(f.options,f.deps);
+  expect(report.code).toBe('ENVELOPE_CLOCK_INVALID');expect(report.state?.feeds).toEqual([]);
+  expect(report.signatureVerification).toBe('NOT_PERFORMED');
+});
+
+test('cumulative RPC bytes across signed batches exhaust the shared tick budget without partial acceptance',async()=>{
+  const f=signedFixture(),request=f.deps.fetch!;
+  f.deps.fetch=(async(input,init)=>{
+    const response=await request(input,init);
+    if(String(input)===PYTH_SYMBOLS_URL||String(input)===PYTH_LATEST_PRICE_URL)return response;
+    // Valid JSON padded below the per-response limit; only the aggregate budget
+    // can reject these otherwise valid preflight and verification responses.
+    return new Response((await response.text()).padEnd(900000,' '),{headers:{'content-type':'application/json'}});
+  }) as typeof fetch;
+  const report=await readbackTick(f.options,f.deps);
+  expect(f.rpcRequests.length).toBeGreaterThan(11);
+  expect(f.rpcRequests.length).toBeLessThan(22);
+  expect(report.status).toBe('DEGRADED');expect(report.code).toBe('SIGNED_VERIFICATION_FAILED');
+  expect(report.state?.feeds).toEqual([]);expect(f.writes).toHaveLength(1);expect(f.writes[0]!.feeds).toEqual([]);
+});
+
 test("disabled, missing approval, missing token and missing persistence perform no network requests",async()=>{
   const f=fixture();f.options.configuration={...config(),enabled:false};expect((await readbackTick(f.options,f.deps)).status).toBe("DISABLED");
   f.options.configuration=config();f.options.manifest=null;expect((await readbackTick(f.options,f.deps)).status).toBe("NOT_CONFIGURED");

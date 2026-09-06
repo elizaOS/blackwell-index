@@ -27,6 +27,17 @@ function fixture(fault='') {
  }) as typeof fetch};return {calls,dependencies};
 }
 const options={update:envelope,network:'base' as const,simulationFrom:PYTH_BASE_VERIFIER};
+test('all preflight and verification RPC bytes share one cumulative budget',async()=>{
+ const f=fixture(),budget={remaining:100000};
+ expect((await verifyPythEvmUpdate(options,{...f.dependencies,responseBudget:budget})).status).toBe('CONTRACT_ACCEPTED');
+ const consumed=100000-budget.remaining;expect(consumed).toBeGreaterThan(0);
+ const limited=fixture(),small={remaining:consumed-1};
+ const report=await verifyPythEvmUpdate(options,{...limited.dependencies,responseBudget:small});
+ expect(report.code).toBe('RPC_TICK_BUDGET_EXCEEDED');expect(report.payloadHex).toBeUndefined();expect(small.remaining).toBe(0);
+ const exhausted=fixture();
+ expect((await verifyPythEvmUpdate(options,{...exhausted.dependencies,responseBudget:{remaining:0}})).status).toBe('BLOCKED');
+ expect(exhausted.calls).toHaveLength(0);
+});
 test('contract verification makes only pinned reads and preserves its trust boundary',async()=>{
  const f=fixture(),r=await verifyPythEvmUpdate(options,f.dependencies);
  expect(r.status).toBe('CONTRACT_ACCEPTED');expect(r.payloadHex).toBe('0x'+body);

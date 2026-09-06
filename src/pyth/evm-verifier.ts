@@ -45,7 +45,7 @@ export async function verifyPythEvmUpdate(options:PythEvmVerificationOptions,dep
     if(preflight.status!=='DEPLOYMENT_PREFLIGHT_PASSED'||!preflight.block)fail(preflight.code??'PREFLIGHT_FAILED');
     const block=preflight.block!;
     const pinned={blockHash:block.hash,requireCanonical:true};let id=100;
-    const call=(method:string,params:unknown[])=>pythReadOnlyRpc(preflight.rpc,++id,method,params,dependencies.fetch??fetch,controller.signal,dependencies.requestTimeoutMs??5000);
+    const call=(method:string,params:unknown[])=>pythReadOnlyRpc(preflight.rpc,++id,method,params,dependencies.fetch??fetch,controller.signal,dependencies.requestTimeoutMs??5000,dependencies.responseBudget);
     const fee=BigInt(preflight.verificationFeeWei!);
     if(fee>1n)fail('VERIFICATION_FEE_REVIEW_REQUIRED');
     if(quantity(await call('eth_getBalance',[options.simulationFrom,pinned]))<fee)fail('SIMULATION_BALANCE_INSUFFICIENT');
