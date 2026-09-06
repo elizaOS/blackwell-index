@@ -15,6 +15,7 @@ const MODELS = ["B200", "B300", "GB200", "GB300"];
 const MAX_BYTES = 2_000_000;
 // The reviewed browser rejects older response calculations independently of source age.
 const DEMO_SNAPSHOT_MAX_AGE_MS = 120_000;
+const DEMO_BROWSER_FUTURE_TOLERANCE_MS = 30_000;
 const sha256 = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
 function requireValue(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -49,7 +50,8 @@ export function validateDemo(value: unknown, policy: { registry: Registry; metho
   requireValue(data.registryHash === hash(registry) && data.methodologyVersion === `${methodology.version}-centralized-demo` && data.methodologyHash === hash({ basis: methodology, mode: "CENTRALIZED_DEMO", weights: "equal available provider groups; equal four models" }), "Demo does not match the reviewed local policy hashes");
   requireValue(Array.isArray(data.inputBatchHashes) && data.inputBatchHashes.length === 0 && Array.isArray(data.rejected) && data.rejected.length === 0, "Demo must not expose private batch references");
   const current = (time: unknown): time is number => positiveInteger(time) && BigInt(time) <= BigInt(now) + BigInt(methodology.futureToleranceMs) && BigInt(now) - BigInt(time) <= BigInt(methodology.maxAgeMs);
-  requireValue(current(data.calculatedAt) && BigInt(now) - BigInt(data.calculatedAt) <= BigInt(Math.min(methodology.maxAgeMs, DEMO_SNAPSHOT_MAX_AGE_MS)), "Demo calculation is stale or future-dated");
+  const browserFutureTolerance = BigInt(Math.min(methodology.futureToleranceMs, DEMO_BROWSER_FUTURE_TOLERANCE_MS));
+  requireValue(current(data.calculatedAt) && BigInt(data.calculatedAt) <= BigInt(now) + browserFutureTolerance && BigInt(now) - BigInt(data.calculatedAt) <= BigInt(Math.min(methodology.maxAgeMs, DEMO_SNAPSHOT_MAX_AGE_MS)), "Demo calculation is stale or future-dated");
   const calculatedAt = data.calculatedAt;
   requireValue(registry.providers.length <= 200 && Array.isArray(data.feeds) && data.feeds.length === registry.providers.length * MODELS.length + MODELS.length + 1, "Demo feed coverage is missing or exceeds the local policy");
   const expectedIds = ["SBX", ...MODELS.map(model => `SBX:${model}`), ...registry.providers.flatMap(provider => MODELS.map(model => `SBX:${provider.id}:${model}`))];
@@ -63,7 +65,7 @@ export function validateDemo(value: unknown, policy: { registry: Registry; metho
     requireValue(Object.keys(weights).length <= 200 && Object.entries(weights).every(([key, weight]) => key.length <= 128 && weight === 1), "Invalid demo weights");
     if (feed.status === "READY") {
       requireValue(typeof feed.price === "string" && feed.price.length <= 24 && fromMicros(toMicros(feed.price)) === feed.price, "Demo price must be an exact positive six-decimal value");
-      requireValue(current(feed.observedAt) && BigInt(feed.observedAt) <= BigInt(calculatedAt) + BigInt(methodology.futureToleranceMs) && BigInt(calculatedAt) - BigInt(feed.observedAt) <= BigInt(methodology.maxAgeMs) && feed.reasons.length === 0 && feed.contributors.length > 0, "Ready demo price has inconsistent source time or availability metadata");
+      requireValue(current(feed.observedAt) && BigInt(feed.observedAt) <= BigInt(calculatedAt) + browserFutureTolerance && BigInt(calculatedAt) - BigInt(feed.observedAt) <= BigInt(methodology.maxAgeMs) && feed.reasons.length === 0 && feed.contributors.length > 0, "Ready demo price has inconsistent source time or availability metadata");
     } else requireValue(feed.status === "UNAVAILABLE" && feed.price === null && feed.observedAt === null && feed.reasons.length === 1 && feed.contributors.length === 0, "Unavailable demo feed must contain no price or source time");
     return feed as unknown as Feed;
   });

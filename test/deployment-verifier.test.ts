@@ -89,6 +89,18 @@ test("self-consistent demo calculation must also meet the browser response-age l
   expect(browser).toMatch(/const SNAPSHOT_MAX_AGE_MS = 120_000;/);
 });
 
+test("custom future policy cannot admit calculations or source offsets rejected by the browser", () => {
+  const policy = { ...methodology, futureToleranceMs: 60000 };
+  expect(validate(demo(NOW + 30000, observations(NOW), policy), NOW, policy).readyModels).toBe(4);
+  expect(() => validate(demo(NOW + 30001, observations(NOW), policy), NOW, policy)).toThrow("calculation is stale or future-dated");
+  const source = (offset: number) => observations(NOW).map(quote => ({ ...quote, observedAt: NOW + offset }));
+  expect(validate(demo(NOW, source(30000), policy), NOW, policy).readyModels).toBe(4);
+  expect(() => validate(demo(NOW, source(30001), policy), NOW, policy)).toThrow("inconsistent source time");
+  const browser = readFileSync(resolve(import.meta.dir, "../public/assets/index.js"), "utf8");
+  expect(browser).toContain("data.calculatedAt > Date.now() + 30_000");
+  expect(browser).toContain("feed.observedAt > data.calculatedAt + 30_000");
+});
+
 for (const change of ["stale-snapshot", "future-snapshot", "stale-source", "future-source", "source-after-calculation", "feed-clock", "unsafe-time"] as const) test(`demo rejects incoherent ${change}`, () => {
   const value = demo(), first = value.feeds.find(feed => feed.status === "READY")!;
   if (change === "stale-snapshot") value.calculatedAt = NOW - methodology.maxAgeMs - 1;
