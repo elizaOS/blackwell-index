@@ -31,7 +31,7 @@ The integrated path uses existing manifest and catalog checks, journal-reproduce
 Remaining software acceptance:
 
 1. Extend the protected SQLite command-wrapper coverage to subprocess/host interruption. Current tests reopen the actual state wrapper for initial acceptance, carried timestamps and rejected later-feed rollback, and verify permissions, hashes and lock cleanup; they use synthetic RPC transport rather than cryptographic proof.
-2. Add an automated official-contract harness using real cryptographic signatures. Fixture RPC acceptance is not cryptographic evidence.
+2. Connect the independently signed contract vectors to the TypeScript transport path. The external-checkout [official-contract harness](../tests/evm/README.md) now passes six cryptographic tests locally, including an offline run; fixture RPC acceptance remains separate evidence.
 3. Complete full hosted tests and deployment checks for the exact final commit, then review before merging. Keep production activation separate.
 
 Actual approved SBX numeric IDs, symbols, exponents, channels, quote currency and publisher thresholds must still be supplied. Both readback modes use the same feed-policy implementation; there is no separate signed-mode policy layer.
