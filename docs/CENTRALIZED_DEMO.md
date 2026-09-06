@@ -9,3 +9,5 @@ The demo includes only validated, current public USD on-demand exclusive-instanc
 `mode: CENTRALIZED_DEMO`, `publishable: false` and `pythPublished: false` are returned on every response. No private capture, raw evidence, identity key or credential is exposed. Historical captures are not used to fill missing current prices. Source freshness uses the existing methodology age limit; the browser also expires stale responses.
 
 The query reads only the latest capture timestamp, including its split rows, with a 64-row bound. Oversized cycles fail with 503 instead of showing a partial aggregate. Demo availability is separate from the oracle readiness endpoint.
+
+The navigation offers Demo and Real modes, selected by `?mode=demo` or `?mode=real` (Demo is the default). The selection carries across Index, Providers and Methodology and chooses the matching API link. Real reads `/v1/feeds` and requires a publishable, non-demo snapshot; unavailable real feeds never fall back to centralized prices. The real-mode switch does not enable Pyth publishing.
