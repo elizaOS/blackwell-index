@@ -66,3 +66,12 @@ describe("price mode separation", () => {
     const real = snapshot(); expect(validateModeSnapshot(real, "real")).toBe(real);
   });
 });
+
+import { resolveMode } from "../public/assets/mode.js";
+test("deployment flag defaults to real and requires explicit demo opt-in", () => {
+  expect(resolveMode()).toBe("real");
+  expect(resolveMode({})).toBe("real");
+  expect(resolveMode({ DEMO_MODE: false })).toBe("real");
+  expect(resolveMode({ DEMO_MODE: true })).toBe("demo");
+  expect(resolveMode({ DEMO_MODE: "false" })).toBe("real");
+});
