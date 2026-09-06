@@ -52,3 +52,17 @@ describe("public price display boundary", () => {
     expect(() => validateSnapshot(future)).toThrow("Invalid ready price");
   });
 });
+
+import { validateModeSnapshot } from "../public/assets/index.js";
+describe("price mode separation", () => {
+  test("demo requires an explicit non-publishing demo response", () => {
+    const demo = { ...snapshot(), mode: "CENTRALIZED_DEMO", publishable: false, pythPublished: false };
+    expect(validateModeSnapshot(demo, "demo")).toBe(demo);
+    expect(() => validateModeSnapshot(snapshot(), "demo")).toThrow();
+  });
+  test("real mode never falls back to demo or unapproved prices", () => {
+    expect(() => validateModeSnapshot({ ...snapshot(), mode: "CENTRALIZED_DEMO", publishable: false, pythPublished: false }, "real")).toThrow();
+    expect(() => validateModeSnapshot({ ...snapshot(), publishable: false }, "real")).toThrow();
+    const real = snapshot(); expect(validateModeSnapshot(real, "real")).toBe(real);
+  });
+});

@@ -1,3 +1,4 @@
+import { mode, feedPath } from "./mode.js";
 const MODELS = ["B200", "B300", "GB200", "GB300"];
 const REFRESH_MS = 30_000;
 const SNAPSHOT_MAX_AGE_MS = 120_000;
@@ -37,6 +38,16 @@ export function validateSnapshot(data) {
   const allModelsReady = MODELS.every(model => data.feeds.some(feed => feed.kind === "MODEL" && feed.model === model && qualified(feed)));
   if ((qualified(composite) && !allModelsReady) || (data.publishable && (!qualified(composite) || !allModelsReady))) throw new Error("Incomplete publishable snapshot");
   return data;
+}
+
+export function validateModeSnapshot(payload, selectedMode) {
+  if (selectedMode === "demo") {
+    if (payload?.mode !== "CENTRALIZED_DEMO" || payload.publishable !== false || payload.pythPublished !== false) throw new Error("Invalid demo response");
+  } else if (selectedMode === "real") {
+    if (payload?.mode !== undefined) throw new Error("Invalid real response");
+    if (payload?.publishable !== true) throw new Error("Real prices are not yet available");
+  } else throw new Error("Invalid mode");
+  return validateSnapshot(payload);
 }
 
 function renderProviders(feeds) {
@@ -83,13 +94,12 @@ async function refresh() {
   if (requestInFlight) return;
   requestInFlight = true;
   try {
-    const response = await fetch("/v1/demo", { cache: "no-store", headers: { Accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
+    const response = await fetch(feedPath, { cache: "no-store", headers: { Accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
     if (!response.ok) throw new Error("Feed endpoint unavailable");
     const payload = await response.json();
-    if (payload.mode !== "CENTRALIZED_DEMO" || payload.publishable !== false || payload.pythPublished !== false) throw new Error("Invalid demo response");
-    const snapshot = validateSnapshot(payload);
+    const snapshot = validateModeSnapshot(payload, mode);
     render(snapshot); lastSnapshot = snapshot;
-  } catch (error) { unavailable(error instanceof Error && error.message === "Snapshot is stale" ? "Snapshot expired" : "Node connection unavailable"); }
+  } catch (error) { unavailable(error instanceof Error && ["Snapshot is stale", "Real prices are not yet available"].includes(error.message) ? error.message : "Price data unavailable"); }
   finally { requestInFlight = false; }
 }
 

@@ -73,3 +73,9 @@ body:not(.altx-page) .site-header nav a[aria-current="page"]{text-decoration:und
 @media(max-width:560px){body:not(.altx-page) .site-header nav{column-gap:22px;row-gap:16px;font-size:12px;line-height:1.5}.index-page main{padding-top:48px}}
 body:not(.altx-page){min-height:100svh}
 @media(max-width:560px){.providers-page table{font-size:11px}.providers-page th,.providers-page td{padding-inline:8px}}
+
+.mode-switch{display:inline-flex;gap:14px;padding-left:22px;border-left:1px solid var(--line)}
+.mode-switch a{color:var(--muted)}
+.mode-switch a[aria-current="true"]{color:var(--ink);text-decoration:underline;text-underline-offset:6px}
+.index-page .composite-price{margin-top:0}
+@media(max-width:560px){.mode-switch{padding-left:16px}}
