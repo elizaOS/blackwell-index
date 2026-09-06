@@ -84,6 +84,8 @@ Use `--init-state` only for a reviewed first bootstrap; omit it on restart to pr
 
 The first chain target is **Base Sepolia, followed by Base mainnet**. Solana and Robinhood Chain follow with separate verification tests. [Chain selection and implementation gates](docs/PYTH_CHAIN_SELECTION.md) distinguishes supported Pyth contracts from an actual SBX integration; no SBX transaction has been verified yet.
 
+`bun run pyth:chain-preflight` checks Base Sepolia's network and Pyth deployment through its fixed public RPC; add `--network base` for Base mainnet. It requires no credentials or gas, submits no transactions and does not verify any price or signed payload. A passed deployment check is not oracle readiness.
+
 A self-hosted node can set `pythManifestPath` in its private configuration to attempt publication after each eligible collection cycle. The runtime checks current feed metadata, keeps durable per-feed timestamps, and connects to a separately running local Pyth agent. Hosted collector nodes do not hold Pyth signing keys.
 
 ## Verification

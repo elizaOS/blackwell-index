@@ -42,9 +42,26 @@ At approximately **19:30 UTC**, Solana `getAccountInfo` returned the documented 
 
 The treasury in devnet storage differs from the mainnet treasury shown in the Pyth prose example. Read and validate treasury/fee/trusted signers from the chosen cluster's program-owned storage; do not copy a mainnet treasury into devnet configuration. Program executability alone does not verify its deployed source or upgrade authority. [SVM accounts and verification](https://docs.pyth.network/price-feeds/pro/integrate-as-consumer/svm).
 
+### Base interface compatibility
+
+The official `0.1.1` to `0.2.0` change adds two trusted-signer inspection methods; `verifyUpdate` and the storage layout are unchanged. The version difference is not evidence of a new signature format or an upgrade requirement for the current Pro envelope. Base integrations must not call the new getters until its deployment is upgraded and reviewed. [Exact upstream change](https://github.com/pyth-network/pyth-crosschain/commit/4255a45dd54a8d01c85fcfdbe63cfd32cfc2cbab).
+
+The candidate Solidity source pin is `8dd8deee8d115b3ad4cea6ddc615118ba670ee36`. Its verifier source matches the retrieved verified Base implementation source; its parser and structs match the inspected current upstream versions and include per-feed generation time. This is a reviewed source candidate, not a deployed SBX consumer. [Pinned verifier](https://github.com/pyth-network/pyth-crosschain/blob/8dd8deee8d115b3ad4cea6ddc615118ba670ee36/lazer/contracts/evm/src/PythLazer.sol), [timestamp-field change](https://github.com/pyth-network/pyth-crosschain/commit/e8844e6c0385ddec2a04470c1ff2ce1585410e2b).
+
+At 19:44:35 UTC, canonical block-hash-pinned proxy storage and runtime-code reads resolved the following implementation addresses. Sourcify's exact-runtime records corroborated the observed runtime hashes. This is not an independent recompilation or security audit. [Proxy storage standard](https://eips.ethereum.org/EIPS/eip-1967).
+
+| Network | Implementation | Runtime SHA-256 | Source record |
+| --- | --- | --- | --- |
+| Base | `0xbe065fb09d9893e3d8df10ad7e73ee153a438a64` | `afd17f3f302ebe3ac8b6668b086e82b874fd61221348c359f1aaba48a2a35705` | [Verified-source record](https://sourcify.dev/server/v2/contract/8453/0xbe065fb09d9893e3d8df10ad7e73ee153a438a64?fields=all) |
+| Base Sepolia | `0x486908b534e34d1ca04d12f01b5bf47ac62a68f5` | `dd7338f85407e4e201400eb269a364186b60015ac29de61b38ab9914bf6bc120` | [Verified-source record](https://sourcify.dev/server/v2/contract/84532/0x486908b534e34d1ca04d12f01b5bf47ac62a68f5?fields=all) |
+
+The parser requires application review: it overwrites repeated properties, and its convenience checks treat zero confidence as missing. Our consumer must reject duplicate feed/property entries and distinguish an explicitly present zero confidence from an absent field when approved semantics permit zero. Do not copy the example's assumptions into SBX. Real assigned-feed payload tests are still required. [Pinned parser](https://github.com/pyth-network/pyth-crosschain/blob/8dd8deee8d115b3ad4cea6ddc615118ba670ee36/lazer/contracts/evm/src/PythLazerLib.sol).
+
 ## Consumer architecture
 
 Pyth Pro is the narrowest continuation of this repository: authenticated retrieval of `evm` or `solana` signed binary payloads for assigned numeric Pro IDs, verification by the official chain contract/program, then application checks on the **verified binary fields**. Parsed JSON beside a signature is not itself proof that those fields were signed. The existing offchain monitor requests `formats: []`; its successful result cannot be reused as chain-verification evidence. [Subscription formats](https://docs.pyth.network/price-feeds/pro/subscribe-to-prices), [EVM verification](https://docs.pyth.network/price-feeds/pro/integrate-as-consumer/evm).
+
+The current Pro EVM verifier checks one trusted ECDSA signer per envelope. This is distinct from upgraded Core's three-router verification threshold. Neither the number of SBX collector nodes nor a price's `publisherCount` establishes a quorum of router signatures. Any stronger consumer quorum policy requires a separately reviewed design and access to the necessary signed router outputs. [Pro verifier](https://github.com/pyth-network/pyth-crosschain/blob/main/lazer/contracts/evm/src/PythLazer.sol), [Core verification](https://docs.pyth.network/price-feeds/core/upgrade/how-it-works).
 
 For the first Base consumer, verify payload signatures through the approved `PythLazer` deployment, parse with a pinned `PythLazerLib`, and enforce assigned feed IDs, exponent, positive price, confidence, publisher minimum, per-feed generation freshness, expected channel and monotonic accepted timestamps. Reject duplicate/missing required fields, carried stale values and same-time conflicting values. Retain the original timestamp; writing an old value in a new block does not make it fresh. Store a bounded last-accepted value and emit a receipt event if downstream integrations need readback. That would be **our consumer's stored state**, not a claim that the Pro verifier maintains a shared price registry.
 
@@ -52,10 +69,25 @@ For Solana, use the official program and a pinned `pyth-lazer-solana-contract` i
 
 Pyth Core is a different option for shared prices read by lending markets, vaults and third-party liquidators. It uses different feed IDs and contracts. Request a confirmed Core mapping and support commitment if that is the product requirement; a numeric Pro listing does not imply a Core feed exists. A custom Pro storage adapter adds our own keeper, administration and contract risk and is not automatically accepted by lenders. Do not label it a Core oracle. [Core versus Pro](https://docs.pyth.network/price-feeds/core/upgrade/contracts).
 
+## Available deployment preflight
+
+```sh
+bun run pyth:chain-preflight
+bun run pyth:chain-preflight --network base
+```
+
+The first command selects Base Sepolia. The second selects Base mainnet. No token, wallet, account or gas is needed. Only the two reviewed public RPCs are allowed; the command has no configurable transaction signer or send method.
+
+The bounded check validates the chain ID, obtains a recent sealed block, reads verifier code/version/fee using the canonical block-hash selector, then rechecks that block and chain identity. Its Base version pin is `0.1.1`; a changed version requires review rather than automatic acceptance. A response from one RPC and a hash of proxy runtime code do not attest the implementation, upgrade authority or finality.
+
+`DEPLOYMENT_PREFLIGHT_PASSED` means only that those metadata checks passed. Reports explicitly mark signed-payload, price and transaction verification as not performed and oracle health as not assessed. The command cannot establish SBX feed admission or consumer compatibility. Exit 0 is a passed preflight; exit 1 is a blocked check; exit 130 is cancellation. Local tests use isolated RPC fixtures; live checks must be recorded separately. [Canonical block selectors](https://eips.ethereum.org/EIPS/eip-1898), [Base sealed-block semantics](https://docs.base.org/base-chain/api-reference/rpc-overview).
+
+The implemented command passed real metadata checks at 19:47:58 UTC on Base Sepolia, block `0x2c53247`, and at 19:48:00 UTC on Base mainnet, block `0x309b346`. Both returned version `0.1.1` and a verification fee of 1 wei. No price payload was requested or verified, and no transaction was submitted.
+
 ## Implementation stages
 
 1. **Offline consumer tests:** pin the exact verifier interface and parsing library; use isolated fixtures for missing fields, wrong units, bad signatures, stale/future/carried prices, replay/conflicts and wrong chain/address. No fabricated values enter production configuration.
-2. **Read-only Base Sepolia preflight:** check chain ID, approved verifier address, implementation/version, fee and required methods. With an entitled token and actual assigned SBX feeds, retrieve signed payloads and verify them via `eth_call`. This is a simulation, not a transaction receipt or production proof.
+2. **Read-only Base Sepolia verification:** the implemented preflight above checks deployment metadata only. Still required: implementation/interface compatibility review, an entitled token and actual assigned SBX feeds, followed by signed-payload verification via `eth_call`. This is a simulation, not a transaction receipt or production proof.
 3. **Base Sepolia transaction acceptance:** after an operator supplies a dedicated signer and test ETH, deploy the minimal consumer, submit real fresh SBX payloads, retain successful receipts and independently read verified fields at the receipt block. Exercise denied feeds, source loss, rate limits, restart, reorg/replacement, signer failure and stale-price rejection.
 4. **Base mainnet release:** independently recheck deployment/version and transaction costs; approve a funded signer, transaction/daily spend limits and supervision. Verify receipt finality and consumer state. Do not use a preconfirmation as final settlement evidence.
 5. **Robinhood and Solana qualification:** independently repeat network, fee, signer, transaction and readback tests. EVM reuse does not waive Robinhood-specific sequencer/finality checks; Solana needs its own finalized receipt/account and instruction-validation evidence.
