@@ -1,6 +1,7 @@
 import type { NodeIdentity, Registry, Methodology, SignedBatch, Snapshot } from "./types";
 import { canonical, hash, verifyBatch } from "./crypto";
 import { allowedObservation, calculate } from "./engine";
+import { centralizedDemo, demoRegistry } from "./demo";
 import { signedBatchSchema } from "./validation";
 import type { Journal as Store } from "./journal";
 import { JOURNAL_LIMITS, type EquivocationPage, type EquivocationProof, validateEquivocationProof } from "./journal";
@@ -145,6 +146,15 @@ export class OracleNode {
     }
     if(request.method!=="GET")return json({error:"METHOD_NOT_ALLOWED"},405);
     if(url.pathname==="/healthz")return json({status:"RUNNING"});
+    if(url.pathname==="/v1/demo") {
+      const {store,registry,methodology,identity}=this.options;
+      const latest=store.db.query("SELECT collected_at FROM captures ORDER BY id DESC LIMIT 1").get() as {collected_at:number}|null;
+      const rows=latest?store.db.query("SELECT observations FROM captures WHERE collected_at=? ORDER BY id LIMIT 65").all(latest.collected_at) as {observations:string}[]:[];
+      // A collection may span several rows; never display a truncated cycle.
+      if(rows.length>64)return json({error:"DEMO_CAPTURE_TOO_LARGE"},503);
+      const observations=rows.flatMap(row=>JSON.parse(row.observations) as unknown[]);
+      return json(centralizedDemo(observations,demoRegistry(registry),methodology,identity,this.clock()));
+    }
     if(url.pathname==="/v1/status")return json({nodeId:this.options.identity.nodeId,network:this.options.registry.network,registryHash:hash(this.options.registry),methodologyHash:hash(this.options.methodology),methodologyStatus:this.options.methodology.status,counts:this.options.store.counts(),pyth:"NOT_PUBLISHED"});
     if(url.pathname==="/v1/registry")return json(this.options.registry);
     if(url.pathname==="/v1/methodology")return json(this.options.methodology);

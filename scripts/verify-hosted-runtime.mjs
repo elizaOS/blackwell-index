@@ -27,6 +27,11 @@ function cli(args,input) {
 try {
   const worker=await mf.getWorker("isolated-sbx");
   const before=await (await worker.fetch("https://primary.blackwellindex.com/v1/status")).json();
+  const demoResponse=await worker.fetch("https://primary.blackwellindex.com/v1/demo");
+  assert.equal(demoResponse.status,200);
+  const demo=await demoResponse.json();
+  assert.equal(demo.mode,"CENTRALIZED_DEMO");assert.equal(demo.publishable,false);assert.equal(demo.pythPublished,false);
+  assert(demo.feeds.every(feed=>feed.price===null));
   const recovery=(await mf.getBindings("isolated-client")).RECOVERY;
   const response=await recovery.fetch("https://recovery.internal/export/primary",{method:"POST"});
   assert.equal(response.status,200);

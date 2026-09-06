@@ -1,6 +1,6 @@
 # Centralized demo
 
-The homepage reads `/v1/demo`, a separate view of the latest local collector cycle. The existing `/v1/feeds`, `/v1/ready`, operator registry and Pyth publisher are unchanged.
+The homepage reads `/v1/demo`, a separate view of the latest local collector cycle. Both self-hosted and Cloudflare nodes serve this endpoint through the shared node handler. The existing `/v1/feeds`, `/v1/ready`, operator registry and Pyth publisher are unchanged.
 
 On 2026-09-06 the project operator confirmed approval from Oracle, Azure and Verda to publish their collected prices for this demo. `demoRegistry` records that authorization separately from oracle-network admission. Other providers remain subject to their configured source rights. Expired permissions and disabled collection remain excluded.
 

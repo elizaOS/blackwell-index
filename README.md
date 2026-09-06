@@ -56,6 +56,7 @@ Read the [methodology](docs/METHODOLOGY.md), [source research](docs/PROVIDERS.md
 | `GET /healthz` | Process liveness |
 | `GET /v1/ready` | Benchmark publication readiness; 503 when unavailable |
 | `GET /v1/status` | Node identity, configuration hashes and local counts |
+| `GET /v1/demo` | Latest local collection in centralized demo mode; never Pyth publication |
 | `GET /v1/feeds` | Provider feeds, four model feeds, SBX and reasons for missing values |
 | `GET /v1/feeds/SBX` | One feed; 503 when it has no current price |
 | `GET /v1/methodology` | Versioned calculation rules |
