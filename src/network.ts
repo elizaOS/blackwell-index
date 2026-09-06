@@ -7,6 +7,7 @@ import { JOURNAL_LIMITS, type EquivocationPage, type EquivocationProof, validate
 import { resolve, sep, isAbsolute } from "node:path";
 import { realpath } from "node:fs/promises";
 import { z } from "zod";
+import { latestDemoResponse } from "./demo";
 
 const MAX_BODY=2_000_000;
 const MAX_PEER_BODY=8_000_000;
@@ -144,6 +145,11 @@ export class OracleNode {
       catch(e){return json({error:e instanceof z.ZodError?"INVALID_SCHEMA":e instanceof Error?e.message:"INVALID_REPORT"},400);}
     }
     if(request.method!=="GET")return json({error:"METHOD_NOT_ALLOWED"},405);
+    if(url.pathname==="/v1/demo") {
+      // Hosted demo approvals do not grant rights to independent local operators.
+      const result=latestDemoResponse(this.options.store.db,this.options.registry,this.options.methodology,this.options.identity,this.clock());
+      return json(result.body,result.status);
+    }
     if(url.pathname==="/healthz")return json({status:"RUNNING"});
     if(url.pathname==="/v1/status")return json({nodeId:this.options.identity.nodeId,network:this.options.registry.network,registryHash:hash(this.options.registry),methodologyHash:hash(this.options.methodology),methodologyStatus:this.options.methodology.status,counts:this.options.store.counts(),pyth:"NOT_PUBLISHED"});
     if(url.pathname==="/v1/registry")return json(this.options.registry);

@@ -27,6 +27,15 @@ function cli(args,input) {
 try {
   const worker=await mf.getWorker("isolated-sbx");
   const before=await (await worker.fetch("https://primary.blackwellindex.com/v1/status")).json();
+  const demoResponse=await worker.fetch("https://primary.blackwellindex.com/v1/demo");
+  assert.equal(demoResponse.status,200);
+  const demo=await demoResponse.json();
+  assert.equal(demo.mode,"CENTRALIZED_DEMO");
+  assert.equal(demo.publishable,false);assert.equal(demo.pythPublished,false);
+  assert.equal(demo.feeds.length,49);
+  assert(demo.feeds.every(feed=>feed.status==="UNAVAILABLE"&&feed.price===null&&feed.observedAt===null));
+  assert.deepEqual(demo.inputBatchHashes,[]);
+  assert([404,405].includes((await worker.fetch("https://primary.blackwellindex.com/v1/demo",{method:"POST"})).status));
   const recovery=(await mf.getBindings("isolated-client")).RECOVERY;
   const response=await recovery.fetch("https://recovery.internal/export/primary",{method:"POST"});
   assert.equal(response.status,200);
@@ -71,5 +80,5 @@ try {
   for(const [path,method] of [["/export/unknown","POST"],["/export/primary","GET"],["/export/primary?bypass=1","POST"],
     ["/archive/unknown/begin","POST"],["/archive/primary/begin","GET"],["/archive/primary/begin?bypass=1","POST"],["/archive/primary/not-a-checkpoint/seal","POST"]])
     assert.equal((await recovery.fetch(`https://recovery.internal${path}`,{method})).status,404);
-  console.log(JSON.stringify({status:"PASS",runtime:"workerd",privateServiceBinding:true,verifiedEncryptedRestore:true,verifiedStreamingRestore:true,checkpointRetry:true,identityUnchanged:true,publicExportRequestsDenied:privatePaths.length*2,providerRequests:0}));
+  console.log(JSON.stringify({status:"PASS",runtime:"workerd",privateServiceBinding:true,verifiedEmptyDemoRoute:true,verifiedEncryptedRestore:true,verifiedStreamingRestore:true,checkpointRetry:true,identityUnchanged:true,publicExportRequestsDenied:privatePaths.length*2,providerRequests:0}));
 } finally {clearTimeout(timeout);await mf.dispose();rmSync(scratch,{recursive:true,force:true});}

@@ -4,6 +4,8 @@ Open source collectors and reproducible price feeds for NVIDIA B200, B300, GB200
 
 **Status: development network. Pyth publication is pending onboarding and feed approval.** Public pages never substitute generated prices. An unavailable feed has no current value.
 
+The website separates **Demo** and **Real** modes. Demo is a centralized view of current collected prices, not the governed SBX oracle or a Pyth feed. Real uses `/v1/feeds`, keeps the oracle's approval and quorum gates, and never falls back to demo prices. [Demo scope and permissions](docs/CENTRALIZED_DEMO.md).
+
 ## Run a node
 
 Install [Bun](https://bun.sh) 1.3.14, then:
@@ -56,6 +58,7 @@ Read the [methodology](docs/METHODOLOGY.md), [source research](docs/PROVIDERS.md
 | `GET /healthz` | Process liveness |
 | `GET /v1/ready` | Benchmark publication readiness; 503 when unavailable |
 | `GET /v1/status` | Node identity, configuration hashes and local counts |
+| `GET /v1/demo` | Separate centralized view of current prices with applicable source permissions; never publishable or Pyth-backed |
 | `GET /v1/feeds` | Provider feeds, four model feeds, SBX and reasons for missing values |
 | `GET /v1/feeds/SBX` | One feed; 503 when it has no current price |
 | `GET /v1/methodology` | Versioned calculation rules |

@@ -1,5 +1,5 @@
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
-import { centralizedDemo, demoRegistry } from "../demo";
+import { latestDemoResponse, demoRegistry } from "../demo";
 import { generateIdentity } from "../crypto";
 import { OracleNode } from "../network";
 import type { NodeIdentity } from "../types";
@@ -68,12 +68,8 @@ export class SbxNode extends DurableObject<WorkerEnvironment> {
       return json({scheduled:true});
     }
     if (path === "/v1/demo" && request.method === "GET") {
-      const latest = this.journal.db.query("SELECT collected_at FROM captures ORDER BY id DESC LIMIT 1").get() as {collected_at:number}|null;
-      const rows = latest ? this.journal.db.query("SELECT observations FROM captures WHERE collected_at=? ORDER BY id LIMIT 65").all(latest.collected_at) as {observations:string}[] : [];
-      // Bound response computation; never truncate a large collection into a misleading price.
-      if(rows.length > 64)return json({error:"DEMO_CAPTURE_TOO_LARGE"},503);
-      const observations = rows.flatMap(row => JSON.parse(row.observations) as unknown[]);
-      return json(centralizedDemo(observations,demoRegistry(this.config.registry),this.config.methodology,this.identity,Date.now()));
+      const result=latestDemoResponse(this.journal.db,demoRegistry(this.config.registry),this.config.methodology,this.identity,Date.now());
+      return json(result.body,result.status);
     }
     if (path === "/v1/status" && request.method === "GET") {
       const base = await this.node.handle(request, request.headers.get("x-sbx-client-ip") ?? "unknown");
