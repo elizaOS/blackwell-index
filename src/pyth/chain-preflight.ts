@@ -17,7 +17,7 @@ export const PYTH_PREFLIGHT_NETWORKS=Object.freeze({
 export const PYTH_PREFLIGHT_LIMITS=Object.freeze({responseBytes:1024*1024,codeBytes:64*1024,requestTimeoutMs:5000,totalTimeoutMs:30000,maxBlockAgeMs:120000});
 type Network=keyof typeof PYTH_PREFLIGHT_NETWORKS;
 export interface PythChainPreflightOptions {network?:Network;signal?:AbortSignal}
-export interface PythChainPreflightDependencies {fetch?:typeof fetch;now?:()=>number;requestTimeoutMs?:number}
+export interface PythChainPreflightDependencies {fetch?:typeof fetch;now?:()=>number;requestTimeoutMs?:number;responseBudget?:{remaining:number}}
 export interface PythChainPreflightReport {
   status:"DEPLOYMENT_PREFLIGHT_PASSED"|"BLOCKED"|"ABORTED";
   checkedAt:number;
@@ -68,7 +68,15 @@ function block(value:unknown,clock:number):Block {
   if(timestamp===0n||timestamp*1000n>BigInt(clock)+5000n||BigInt(clock)-timestamp*1000n>BigInt(PYTH_PREFLIGHT_LIMITS.maxBlockAgeMs))fail("BLOCK_CLOCK_INVALID");
   return {number:raw.number as string,hash:raw.hash,timestamp:raw.timestamp as string};
 }
-async function rpc(url:string,id:number,method:string,params:unknown[],request:typeof fetch,signal:AbortSignal,timeout:number):Promise<unknown> {
+/** Shared bounded transport for reviewed read-only chain adapters. Not a public API route. */
+export async function pythReadOnlyRpc(url:string,id:number,method:string,params:unknown[],request:typeof fetch,signal:AbortSignal,timeout:number,budget?:{remaining:number}):Promise<unknown> {
+  if(budget&&(!Number.isSafeInteger(budget.remaining)||budget.remaining<=0))fail("RPC_TICK_BUDGET_EXCEEDED");
+  if(!Object.values(PYTH_PREFLIGHT_NETWORKS).some(network=>network.rpc===url))fail("RPC_ENDPOINT_NOT_REVIEWED");
+  if(!["eth_chainId","eth_getBlockByNumber","eth_getCode","eth_getBalance","eth_call"].includes(method))fail("RPC_METHOD_NOT_READ_ONLY");
+  if(!Number.isSafeInteger(id)||id<1)fail("RPC_ID_INVALID");
+  if(!Number.isSafeInteger(timeout)||timeout<1||timeout>PYTH_PREFLIGHT_LIMITS.requestTimeoutMs)fail("TIMEOUT_INVALID");
+  // Never accept a third eth_call parameter: that would enable state overrides.
+  if(!Array.isArray(params)||(method==="eth_call"&&params.length!==2))fail("RPC_PARAMS_INVALID");
   const controller=new AbortController();let reader:ReadableStreamDefaultReader<Uint8Array>|undefined,response:Response|undefined;
   let rejectAbort:(error:PreflightFailure)=>void=()=>{};
   const aborted=new Promise<never>((_,reject)=>{rejectAbort=reject;});void aborted.catch(()=>{});
@@ -85,6 +93,7 @@ async function rpc(url:string,id:number,method:string,params:unknown[],request:t
     reader=response.body.getReader();const bytes=new Uint8Array(PYTH_PREFLIGHT_LIMITS.responseBytes);let used=0;
     for(;;) {
       const next=await Promise.race([reader.read(),aborted]);if(next.done)break;
+      if(budget){if(next.value.byteLength>budget.remaining){budget.remaining=0;fail("RPC_TICK_BUDGET_EXCEEDED");}budget.remaining-=next.value.byteLength;}
       if(used+next.value.byteLength>bytes.length)fail("RPC_RESPONSE_TOO_LARGE");bytes.set(next.value,used);used+=next.value.byteLength;
     }
     let value:unknown;try{value=JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(bytes.subarray(0,used)));}catch{fail("RPC_JSON_INVALID");}
@@ -112,7 +121,7 @@ export async function preflightPythBase(options:PythChainPreflightOptions={},dep
     const timeout=dependencies.requestTimeoutMs??PYTH_PREFLIGHT_LIMITS.requestTimeoutMs;
     if(!Number.isSafeInteger(timeout)||timeout<1||timeout>PYTH_PREFLIGHT_LIMITS.requestTimeoutMs)fail("TIMEOUT_INVALID");
     if(options.signal?.aborted)fail("ABORTED");let id=0;
-    const call=(method:string,params:unknown[])=>rpc(selected.rpc,++id,method,params,dependencies.fetch??fetch,controller.signal,timeout);
+    const call=(method:string,params:unknown[])=>pythReadOnlyRpc(selected.rpc,++id,method,params,dependencies.fetch??fetch,controller.signal,timeout,dependencies.responseBudget);
     if(quantity(await call("eth_chainId",[]))!==BigInt(selected.chainId))fail("CHAIN_ID_MISMATCH");
     const sealed=block(await call("eth_getBlockByNumber",["latest",false]),now(clock));
     const pinned={blockHash:sealed.hash,requireCanonical:true};

@@ -27,6 +27,121 @@ function fixture() {
   return {options,deps,writes,requests,setTime:(value:number)=>{now=value;},setPayload:(value:unknown)=>{upstream=value;},setCatalog:(value:unknown)=>{metadata=value;}};
 }
 
+// Isolated EVM wire and RPC responses. No real signatures or market values.
+function signedFixture(failSecond=false) {
+  const f=fixture(),m=manifest();m.bindings.push({...binding,pythFeedId:42,indexFeedId:'TEST.B300',symbol:'TEST.B300/USD'});
+  f.options.manifest=m;
+  f.options.configuration={...config(),maxFeedsPerRequest:1,signedEvm:{network:'base',simulationFrom:'0x'+'1'.repeat(40)}};
+  f.options.expectedPrints=[...(f.options.expectedPrints??[]),{feedId:42,price:'5.125',sourceTimestampUs:String((NOW-2000)*1000)}];
+  const word=(n:bigint)=>n.toString(16).padStart(64,'0'),rpcRequests:any[]=[];
+  let feedId=41,body='';
+  f.deps.fetch=(async(input,init)=>{
+    const url=String(input);f.requests.push({url,init});
+    if(url===PYTH_SYMBOLS_URL)return json(m.bindings.map(b=>({...catalog()[0],pyth_lazer_id:b.pythFeedId,symbol:b.symbol})));
+    const q=JSON.parse(String(init?.body));
+    if(url===PYTH_LATEST_PRICE_URL) {
+      feedId=q.priceFeedIds[0];
+      body='93c7d375'+word(BigInt(NOW)*1000n).slice(-16)+'0401'+feedId.toString(16).padStart(8,'0')+'05'+'00'+word(5125000n).slice(-16)+'03'+'0003'+'04'+'fffa'+'05'+word(10000n).slice(-16)+'0c01'+word(BigInt(NOW-1000)*1000n).slice(-16);
+      return json({evm:{encoding:'hex',data:'2a22999a'+'01'.repeat(65)+(body.length/2).toString(16).padStart(4,'0')+body},parsed:{timestampUs:'0',priceFeeds:[]}});
+    }
+    expect(new Headers(init?.headers).has('authorization')).toBe(false);
+    rpcRequests.push(q);let result:unknown;
+    if(q.method==='eth_chainId')result='0x2105';
+    else if(q.method==='eth_getBlockByNumber')result={number:'0x123',hash:'0x'+'a'.repeat(64),timestamp:'0x'+Math.floor(NOW/1000).toString(16)};
+    else if(q.method==='eth_getCode')result='0x6000';
+    else if(q.method==='eth_getBalance')result='0x10';
+    else if(q.method==='eth_call') {
+      if(q.params[0].data==='0x54fd4d50')result='0x'+word(32n)+word(5n)+Buffer.from('0.1.1').toString('hex').padEnd(64,'0');
+      else if(q.params[0].data==='0xbac12f87')result='0x'+word(1n);
+      else if(failSecond&&feedId===42)return json({jsonrpc:'2.0',id:q.id,error:{code:3,message:'isolated rejection'}});
+      else result='0x'+word(64n)+'0'.repeat(24)+'01'.repeat(20)+word(BigInt(body.length/2))+body.padEnd(Math.ceil(body.length/64)*64,'0');
+    } else throw Error('unexpected isolated request');
+    return json({jsonrpc:'2.0',id:q.id,result});
+  }) as typeof fetch;
+  return {...f,rpcRequests};
+}
+
+test('signed readback verifies both batches and persists only contract-returned prices',async()=>{
+  const f=signedFixture(),report=await readbackTick(f.options,f.deps);
+  expect(report.status).toBe('UPSTREAM_OBSERVED');expect(report.signatureVerification).toBe('CONTRACT_ACCEPTED_SINGLE_RPC');
+  expect(report.state?.feeds.map(feed=>feed.feedId)).toEqual([41,42]);expect(f.writes).toHaveLength(1);
+  expect(f.rpcRequests).toHaveLength(22);expect(JSON.stringify(report)).not.toContain(TOKEN);
+});
+
+test('a rejected second signed batch cannot persist the first verified timestamp',async()=>{
+  const f=signedFixture(true),report=await readbackTick(f.options,f.deps);
+  expect(report.status).toBe('DEGRADED');expect(report.code).toBe('SIGNED_VERIFICATION_FAILED');
+  expect(report.signatureVerification).toBe('NOT_PERFORMED');expect(report.state?.feeds).toEqual([]);
+  expect(f.writes).toHaveLength(1);expect(f.writes[0]!.feeds).toEqual([]);
+});
+
+test('signed policy failure after restart retains all previously accepted timestamps',async()=>{
+  const f=signedFixture(),first=await readbackTick(f.options,f.deps);
+  expect(first.status).toBe('UPSTREAM_OBSERVED');
+  const prior=structuredClone(first.state!);prior.nextAttemptAt=NOW;
+  f.options.state=prior;
+  f.options.expectedPrints=f.options.expectedPrints!.map(value=>value.feedId===42?{...value,price:'999'}:value);
+  const second=await readbackTick(f.options,f.deps);
+  expect(second.code).toBe('SIGNED_POLICY_FAILED');expect(second.signatureVerification).toBe('NOT_PERFORMED');
+  expect(second.state!.feeds).toEqual(prior.feeds);expect(f.writes[1]!.feeds).toEqual(prior.feeds);
+  expect(second.state!.consecutiveFailures).toBe(1);
+});
+
+test('signed verification never reports durable acceptance when persistence rejects',async()=>{
+  const f=signedFixture();f.options.persistState=()=>{throw Error('private storage detail');};
+  const report=await readbackTick(f.options,f.deps);
+  expect(report.status).toBe('PERSISTENCE_FAILED');expect(report.signatureVerification).toBe('NOT_PERFORMED');
+  expect(report.state).toBeUndefined();expect(JSON.stringify(report)).not.toContain('private storage detail');
+});
+
+test('switching an existing unsigned watermark database to signed mode requires explicit scope review',async()=>{
+  const f=fixture(),first=await readbackTick(f.options,f.deps),count=f.requests.length;
+  f.options.state=first.state;f.options.configuration={...config(),signedEvm:{network:'base',simulationFrom:'0x'+'1'.repeat(40)}};
+  const report=await readbackTick(f.options,f.deps);
+  expect(report.code).toBe('STATE_SCOPE_REVIEW_REQUIRED');expect(f.requests).toHaveLength(count);
+});
+
+test('signed verification rechecks approval after the RPC returns',async()=>{
+  const f=signedFixture();(f.options.manifest as PythManifest).approval.expiresAt=NOW+1000;
+  const request=f.deps.fetch!;
+  f.deps.fetch=(async(input,init)=>{
+    const response=await request(input,init);
+    if(String(input)!==PYTH_LATEST_PRICE_URL&&init?.body&&JSON.parse(String(init.body)).id===102)f.setTime(NOW+1001);
+    return response;
+  }) as typeof fetch;
+  const report=await readbackTick(f.options,f.deps);
+  expect(report.code).toBe('APPROVAL_EXPIRED');expect(report.state?.feeds).toEqual([]);
+  expect(report.signatureVerification).toBe('NOT_PERFORMED');
+});
+
+test('late signed verification cannot accept stale early batch timestamps',async()=>{
+  const f=signedFixture(),request=f.deps.fetch!;let verified=0;
+  f.deps.fetch=(async(input,init)=>{
+    const response=await request(input,init);
+    if(String(input)!==PYTH_LATEST_PRICE_URL&&init?.body&&JSON.parse(String(init.body)).id===102&&++verified===2)f.setTime(NOW+31000);
+    return response;
+  }) as typeof fetch;
+  const report=await readbackTick(f.options,f.deps);
+  expect(report.code).toBe('ENVELOPE_CLOCK_INVALID');expect(report.state?.feeds).toEqual([]);
+  expect(report.signatureVerification).toBe('NOT_PERFORMED');
+});
+
+test('cumulative RPC bytes across signed batches exhaust the shared tick budget without partial acceptance',async()=>{
+  const f=signedFixture(),request=f.deps.fetch!;
+  f.deps.fetch=(async(input,init)=>{
+    const response=await request(input,init);
+    if(String(input)===PYTH_SYMBOLS_URL||String(input)===PYTH_LATEST_PRICE_URL)return response;
+    // Valid JSON padded below the per-response limit; only the aggregate budget
+    // can reject these otherwise valid preflight and verification responses.
+    return new Response((await response.text()).padEnd(900000,' '),{headers:{'content-type':'application/json'}});
+  }) as typeof fetch;
+  const report=await readbackTick(f.options,f.deps);
+  expect(f.rpcRequests.length).toBeGreaterThan(11);
+  expect(f.rpcRequests.length).toBeLessThan(22);
+  expect(report.status).toBe('DEGRADED');expect(report.code).toBe('SIGNED_VERIFICATION_FAILED');
+  expect(report.state?.feeds).toEqual([]);expect(f.writes).toHaveLength(1);expect(f.writes[0]!.feeds).toEqual([]);
+});
+
 test("disabled, missing approval, missing token and missing persistence perform no network requests",async()=>{
   const f=fixture();f.options.configuration={...config(),enabled:false};expect((await readbackTick(f.options,f.deps)).status).toBe("DISABLED");
   f.options.configuration=config();f.options.manifest=null;expect((await readbackTick(f.options,f.deps)).status).toBe("NOT_CONFIGURED");
@@ -34,6 +149,16 @@ test("disabled, missing approval, missing token and missing persistence perform 
   f.options.manifest=manifest();f.options.env={};expect((await readbackTick(f.options,f.deps)).code).toBe("CONSUMER_TOKEN_REQUIRED");
   f.options.env={PYTH_PRO_API_KEY:TOKEN};f.options.persistState=undefined as never;expect((await readbackTick(f.options,f.deps)).status).toBe("PERSISTENCE_FAILED");
   expect(f.requests).toHaveLength(0);expect(f.writes).toHaveLength(0);
+});
+
+test('signed mode never falls back to unsigned parsed data or advances timestamps without an EVM payload',async()=>{
+  const f=fixture();f.options.configuration={...config(),signedEvm:{network:'base',simulationFrom:'0x'+'1'.repeat(40)}};
+  const report=await readbackTick(f.options,f.deps);
+  expect(report.code).toBe('SIGNED_PAYLOAD_MISSING');expect(report.status).toBe('DEGRADED');
+  expect(report.signatureVerification).toBe('NOT_PERFORMED');expect(report.state?.feeds).toEqual([]);
+  const body=JSON.parse(String(f.requests[1]!.init!.body));
+  expect(body.formats).toEqual(['evm']);expect(body.parsed).toBe(false);expect(body.jsonBinaryEncoding).toBe('hex');
+  expect(body.properties).not.toContain('marketSession');
 });
 
 test("uses the exact REST schema and backend bearer token, then persists before success",async()=>{
