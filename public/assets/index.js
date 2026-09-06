@@ -72,7 +72,6 @@ function renderProviders(feeds) {
     }
     body.append(row);
   }
-  setText("provider-summary", providers.length ? `${providers.length} providers` : "");
 }
 
 function render(snapshot) {
@@ -96,7 +95,7 @@ function unavailable(message) {
   setText("composite-price", "—"); renderWeights(null);
   for (const card of document.querySelectorAll("[data-model]")) { card.querySelector(".model-price").textContent = "—"; card.querySelector(".model-price").setAttribute("aria-label", "Unavailable: no current snapshot"); }
   const body = document.getElementById("provider-rows"); body.replaceChildren(); const row = document.createElement("tr"); const cell = document.createElement("td"); cell.colSpan = 5; cell.className = "empty-state"; cell.textContent = "Prices unavailable. Retrying automatically."; row.append(cell); body.append(row);
-  setText("provider-summary", ""); setText("calculated-at", "—"); document.getElementById("calculated-at").removeAttribute("datetime"); setText("methodology-version", "—"); setText("benchmark-status", "Unavailable");
+  setText("calculated-at", "—"); document.getElementById("calculated-at").removeAttribute("datetime"); setText("methodology-version", "—"); setText("benchmark-status", "Unavailable");
 }
 
 async function refresh() {
