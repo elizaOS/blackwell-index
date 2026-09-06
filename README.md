@@ -29,6 +29,8 @@ bun src/cli.ts setup --dir ./operator-two \
 
 API keys belong in environment variables or a secret manager. `bun src/cli.ts credentials lambda-cloud` accepts a hidden terminal entry and writes private `data/credentials.json`, excluded from Git. JSON storage preserves special characters without shell expansion. An existing node-local `.env` is also supported. The provider documentation explains multi-field credentials and mappings. Never submit credentials to another node or commit local configuration.
 
+Eleven collectors are implemented. Oracle, Azure and Verda have real public retrieval evidence; authenticated sources still require live account verification. [Prime Intellect](docs/PRIME_INTELLECT.md) is registered but disabled, with no approved collection or publication rights. Its supported account-specific B200/B300 quotes are outside the public-list cohort; GB200/GB300 remain discovery-only.
+
 Anyone can run a node, select sources, submit signed reports and independently reproduce calculations. A new identity joins as a candidate. It does not gain benchmark voting power by creating additional keys. Source approval and verified operator independence live in an explicit registry. Operators can use their own registry; its hash is published with every snapshot. This is an open collector network with governed admission to the benchmark, not permissionless Pyth publisher admission.
 
 ## Feeds
@@ -38,6 +40,8 @@ Anyone can run a node, select sources, submit signed reports and independently r
 | `SBX:<provider>:<model>` | Comparable prices collected from that provider, with independent collector agreement |
 | `SBX:B200`, `SBX:B300`, `SBX:GB200`, `SBX:GB300` | Fixed-weight averages of configured independent provider groups |
 | `SBX` | Fixed-weight average of all four model feeds |
+
+The current default registry defines 49 feed slots: 44 provider/model combinations, four model feeds and one composite. These are output definitions, not 49 available prices or evidence of 11 independent supply groups. Existing local registries are not silently migrated.
 
 The draft cohort is global, public, on-demand, exclusive-instance list pricing in USD per physical GPU-hour. Dividing an instance tariff by GPU count includes the bundled host services. It does not measure GPU-only hardware price, performance-equivalent compute, or guaranteed available capacity. Spot, reservations, scheduled capacity, account-specific rates and fractional tenancy are retained separately and excluded from this cohort.
 
@@ -101,7 +105,9 @@ docker compose up -d
 
 The published port binds to localhost; use an HTTPS reverse proxy for public peer access. Repeat setup only for a new volume. Collector identities and replay state must survive container upgrades. See [Cloudflare deployment](docs/CLOUDFLARE.md) for managed durable nodes and domain routing.
 
-Self-hosted nodes support encrypted journal backups and verified restoration into a new, disabled identity. Restore never resumes an old signer or copies provider credentials. Read the [recovery procedure and limits](docs/RECOVERY.md) before using it; this procedure does not export hosted Durable Objects.
+Self-hosted nodes support encrypted journal backups and verified restoration into a new, disabled identity. The [hosted recovery tool](docs/HOSTED_RECOVERY.md) exports a signed checkpoint through a private Cloudflare service binding, verifies it locally and creates the same encrypted backup format. Its logical export is capped at 8 MiB. Restore never resumes an old signer, copies provider credentials or replaces a live Durable Object. Read the [recovery procedure and limits](docs/RECOVERY.md); offsite storage, separate key custody, larger-journal archival and a host-loss exercise still require operating owners and evidence.
+
+The [retained-data operating study](docs/OPERATING_STUDY.md) analyzes private captured observations without fetching prices or filling gaps. It reports coverage, cadence and dated changes, not trading returns or benchmark approval. Thirty-day qualification remains `NOT_ESTABLISHED`; parser tests and calendar span do not complete that gate.
 
 The [launch checklist](docs/LAUNCH_TODO.md) names the required accounts, source permissions, Pyth onboarding, external verification and operating evidence. [Domain status](docs/DOMAIN_STATUS.md) records the four requested registrations. Private keys, raw account data and private business documents are not included in this repository.
 

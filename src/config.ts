@@ -29,8 +29,9 @@ export function defaultRegistry(network:string):Registry {
     {id:"verda",economicGroup:"verda",allowedHosts:["api.verda.com"],sources:["verda-public"]},
     {id:"hyperstack",economicGroup:"nexgencloud",allowedHosts:["infrahub-api.nexgencloud.com"],sources:["hyperstack-pricebook"]},
     {id:"shadeform",economicGroup:"shadeform",allowedHosts:["api.shadeform.ai"],sources:["shadeform-instances"]},
+    {id:"prime-intellect",economicGroup:"prime-intellect",allowedHosts:["api.primeintellect.ai"],sources:["prime-intellect-availability"]},
   ];
-  return {schemaVersion:1,network,version:"0.2.0-draft",operators:[],providers:definitions.map(p=>({...p,rights:{collect:["oracle","azure","verda"].includes(p.id),redistribute:false,derive:false,evidence:"",expiresAt:null}}))};
+  return {schemaVersion:1,network,version:"0.3.0-draft",operators:[],providers:definitions.map(p=>({...p,rights:{collect:["oracle","azure","verda"].includes(p.id),redistribute:false,derive:false,evidence:"",expiresAt:null}}))};
 }
 export function defaultMethodology():Methodology {
   return {schemaVersion:1,version:"0.1.0-draft",status:"DRAFT",effectiveAt:1788652800000,

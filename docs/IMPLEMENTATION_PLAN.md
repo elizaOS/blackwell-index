@@ -40,10 +40,14 @@ The previous compute-strategy repository at revision ba8055be4534d0c512be06789aa
 
 ## External completion dependencies
 
-Pyth accepted publisher/asset admission and ingress details; provider-specific API accounts and appropriate automated retrieval/retention/redistribution rights; independent operators and governance owners; authenticated hosted backup, external key custody and production operating review. Domains and same-operator hosting are deployed, but renewal ownership and ongoing operations remain open. Each dependency is recorded in the [launch checklist](LAUNCH_TODO.md). Do not call the oracle published or decentralized in production before those conditions are verified.
+Pyth accepted publisher/asset admission and ingress details; provider-specific API accounts and appropriate automated retrieval/retention/redistribution rights; independent operators and governance owners; verified deployed-revision recovery, offsite backup destination, separate key custody and production operating review. Domains and same-operator hosting are deployed, but renewal ownership and ongoing operations remain open. Each dependency is recorded in the [launch checklist](LAUNCH_TODO.md). Do not call the oracle published or decentralized in production before those conditions are verified.
 
 ## Current implementation scope
 
-Ten collectors are implemented; Oracle, Azure and Verda have real public retrieval evidence. The authenticated collectors remain unverified against live accounts. AWS GB300 is discovery-only until its physical GPU denominator is confirmed. This is a coverage expansion, not a claim to cover every provider or approve any source for publication.
+Eleven collectors are implemented; Oracle, Azure and Verda have real public retrieval evidence. The authenticated collectors remain unverified against live accounts. AWS GB300 is discovery-only until its physical GPU denominator is confirmed. Prime Intellect is registered but disabled with all source rights unapproved: complete supported B200/B300 bundles are account-specific, while GB200/GB300 remain discovery-only. This is a coverage expansion, not a claim to cover every provider or approve any source for publication.
 
-Durable 429/503 scheduling is shared by CLI and hosted collection. Self-hosted encrypted recovery verifies retained history and starts only as a new, disabled identity. Hosted export, offsite custody, sustained independent operation and Pyth readback remain separate acceptance gates.
+Default registry `0.3.0-draft` defines 11 providers and 49 feed slots, not 49 qualified prices. Existing local registries retain their pinned configuration until explicitly reviewed and updated. Historical release evidence keeps the provider and feed counts observed at that revision.
+
+Durable 429/503 scheduling is shared by CLI and hosted collection. [Hosted recovery tooling](HOSTED_RECOVERY.md) now uses a private service binding for a signed, bounded journal export, verifies it locally and creates an encrypted backup. Both hosted exports and self-hosted backups restore only into a new, disabled self-hosted identity. The logical export has an 8 MiB cap; larger-journal streaming archives, offsite custody, deployed-revision recovery verification and a host-loss exercise remain acceptance work.
+
+The [retained-data operating study](OPERATING_STUDY.md) analyzes private captures without network collection or synthetic gap filling. Thirty-day qualification remains `NOT_ESTABLISHED`. Sustained independent operation, source rights and Pyth readback remain separate gates.

@@ -2,7 +2,7 @@
 
 This procedure creates an encrypted, transaction-consistent copy of a Bun SQLite node journal. It preserves retained observations, source responses, configurations, snapshots, signing counters and collection backoff state. It excludes the original private signing key, provider credential files and Pyth publication manifest. A restored node gets a new identity and remains disabled pending operator review.
 
-This is not a Cloudflare Durable Object export, offsite backup service, key escrow service or completed production disaster-recovery program. It does not turn retained unapproved data into publishable data.
+For Cloudflare Durable Objects, first use the separate [private hosted export procedure](HOSTED_RECOVERY.md); it produces this same encrypted format. Neither procedure is an offsite backup service, key escrow service or completed production disaster-recovery program. It does not turn retained unapproved data into publishable data.
 
 ## Create and inspect a backup
 
@@ -52,4 +52,4 @@ Deleting the marker alone is not approval. No CLI command bypasses this review. 
 - Configure encrypted offsite storage, separate key custody and access/restore alerts.
 - Record and verify independent checkpoint hashes and externally published high-water marks.
 - Rehearse host loss, key loss, corrupted archives, provider credential replacement and operator revocation.
-- Implement and test authenticated Cloudflare export with all evidence chunks, object metadata and rollback-safe identity handling. The local commands above do not cover hosted objects.
+- Operate and periodically rehearse the [authenticated hosted export](HOSTED_RECOVERY.md), including its size limits. The local backup command alone does not access hosted objects.

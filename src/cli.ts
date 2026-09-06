@@ -11,18 +11,36 @@ import { collectorCatalog, createCollectors } from "./collectors";
 import { publishSnapshot } from "./pyth/runtime";
 import { backupNode, createRecoveryKey, inspectBackup, RECOVERY_MARKER, restoreNode } from "./recovery";
 import { collectorSchedule, controlledCollectorContext } from "./collection-control";
+import { backupHostedExport } from "./hosted-recovery";
+import { HOSTED_EXPORT_LIMITS } from "./hosted-export";
+import { Database } from "bun:sqlite";
+import { operatingStudy } from "./study";
+import type { SqlDriver } from "./journal";
 import type { NodeIdentity, Observation, SignedBatch } from "./types";
 
-const {values,positionals}=parseArgs({args:process.argv.slice(2),allowPositionals:true,options:{
+function cliArguments() {
+  try {return parseArgs({args:process.argv.slice(2),allowPositionals:true,options:{
   config:{type:"string",default:"config/node.local.json"},dir:{type:"string",default:"."},providers:{type:"string"},
-  peers:{type:"string"},port:{type:"string"},host:{type:"string"},"allow-loopback":{type:"boolean",default:false},at:{type:"string"},sequence:{type:"string"},
+  peers:{type:"string"},port:{type:"string"},host:{type:"string"},"allow-loopback":{type:"boolean",default:false},at:{type:"string"},from:{type:"string"},sequence:{type:"string"},
   output:{type:"string"},input:{type:"string"},"key-file":{type:"string"},target:{type:"string"},
-}});
+  "expected-node-id":{type:"string"},"expected-release":{type:"string"},
+}});}catch(error) {
+    // Argument-parser diagnostics can echo untrusted flags and values before main().
+    if(process.argv.slice(2).includes("import-hosted-backup")) {process.stderr.write("HOSTED_BACKUP_IMPORT_FAILED\n");process.exit(1);}
+    throw error;
+  }
+}
+const {values,positionals}=cliArguments();
 const command=positionals[0]??"help";
 const root=resolve(values.dir!), configPath=resolve(root,values.config!);
 const output=(value:unknown)=>process.stdout.write(`${JSON.stringify(value,null,2)}\n`);
 function readJson(path:string):unknown {return JSON.parse(readFileSync(path,"utf8")) as unknown;}
 function writeNew(path:string,value:string):void {mkdirSync(dirname(path),{recursive:true,mode:0o700});writeFileSync(path,value,{encoding:"utf8",mode:0o600,flag:"wx"});}
+function studyTime(value:string|undefined):number|undefined {
+  if(value===undefined)return undefined;
+  if(!/^[1-9][0-9]{0,15}$/.test(value)||!Number.isSafeInteger(Number(value)))throw new Error("Study times must be positive safe integer epoch milliseconds");
+  return Number(value);
+}
 function load():{config:NodeConfig;node:OracleNode;store:Store} {
   const config=parseConfig(readJson(configPath)), identity=readJson(resolve(root,config.identityPath)) as NodeIdentity;
   if(!identity||identity.nodeId!==nodeIdFor(identity.publicKey)||!identity.privateKeyPem)throw new Error("Invalid local identity");
@@ -70,6 +88,44 @@ async function readSecret():Promise<string> {
   });
 }
 async function main():Promise<void> {
+  if(command==="import-hosted-backup") {
+    const controller=new AbortController();let reading=true;
+    const interrupt=()=>{controller.abort();if(reading)process.stdin.destroy(new Error("HOSTED_IMPORT_INTERRUPTED"));};
+    process.on("SIGINT",interrupt);process.on("SIGTERM",interrupt);
+    try {
+      if(!values.output||!values["key-file"]||!/^[a-f0-9]{64}$/.test(values["expected-node-id"]??"")||!/^[a-f0-9]{40}$/.test(values["expected-release"]??""))throw new Error("INVALID_HOSTED_EXPORT_ARGUMENTS");
+      const chunks:Buffer[]=[];let bytes=0;
+      for await(const part of process.stdin){bytes+=part.length;if(bytes>HOSTED_EXPORT_LIMITS.bytes)throw new Error("HOSTED_EXPORT_TOO_LARGE");chunks.push(Buffer.from(part));}
+      reading=false;
+      if(controller.signal.aborted)throw new Error("HOSTED_IMPORT_INTERRUPTED");
+      const encoded=new TextDecoder("utf-8",{fatal:true}).decode(Buffer.concat(chunks));
+      output(await backupHostedExport(encoded,resolve(root,values.output),resolve(root,values["key-file"]),values["expected-node-id"]!,values["expected-release"]!,{signal:controller.signal}));
+    }finally{reading=false;process.off("SIGINT",interrupt);process.off("SIGTERM",interrupt);}
+    return;
+  }
+  if(command==="study") {
+    const at=studyTime(values.at)??Date.now(),from=studyTime(values.from);
+    if(from!==undefined&&from>at)throw new Error("Study start must not exceed its knowledge cutoff");
+    if(values.output!==undefined&&!values.output)throw new Error("Study output requires a new filename");
+    const destination=values.output===undefined?null:resolve(root,values.output);
+    if(destination&&existsSync(destination))throw new Error("Study output already exists");
+    const config=parseConfig(readJson(configPath));
+    // Store's normal constructor initializes schema and permissions. This command
+    // instead uses its shared SQL contract with a genuinely read-only connection.
+    const database=new Database(resolve(root,config.databasePath),{readonly:true,strict:true});
+    try {
+      const report=operatingStudy(database as unknown as SqlDriver,{asOf:at,expectedIntervalMs:config.intervalMs,...(from===undefined?{}:{from})});
+      if(destination)writeNew(destination,`${JSON.stringify(report,null,2)}\n`);
+      output({kind:report.kind,privacy:report.privacy,reportSaved:destination!==null,asOf:report.asOf,
+        window:report.window,complete:report.completeness.complete,dataScanComplete:report.completeness.dataScanComplete,
+        incompleteReasons:report.completeness.reasons,capturesParsed:report.completeness.capturesParsed,
+        observationsExamined:report.completeness.observationsExamined,retainedPricePoints:report.completeness.retainedPricePoints,
+        seriesCount:report.series.length,sourceCount:report.coverage.sources.length,
+        cadence:{complete:report.cadence.complete,expectedBuckets:report.cadence.expectedBuckets,occupiedBuckets:report.cadence.occupiedBuckets,emptyBuckets:report.cadence.emptyBuckets},
+        anomalyCount:Object.values(report.anomalies.counts).reduce((total,count)=>total+count,0),qualification:report.proposedThirtyDayStudy.qualification});
+    }finally{database.close();}
+    return;
+  }
   if(command==="backup-keygen") {
     if(!values.output)throw new Error("backup-keygen requires --output KEY_FILE");
     output(createRecoveryKey(resolve(root,values.output)));return;
@@ -130,7 +186,7 @@ async function main():Promise<void> {
   }
   if(command==="providers"){output(collectorCatalog);return;}
   if(!["run","collect","status","replay","reproduce"].includes(command)) {
-    process.stdout.write("Blackwell Index node\n\nsetup [--dir PATH] [--providers oracle-public,azure-retail] [--peers https://NODE]\ncredentials COLLECTOR [ENV_NAME]   save one API key locally using hidden terminal input\nproviders              list supported adapters and key requirements\ncollect                collect real data once and sync peers\nrun                    serve API and collect continuously\nstatus                 inspect local counts, identity and readiness\nreplay --at EPOCH_MS    explore observations known at a historical time\nreproduce --sequence N reproduce an archived snapshot with its exact inputs and configuration\nbackup-keygen --output KEY_FILE\nbackup --key-file KEY_FILE --output BUNDLE_FILE\nbackup-inspect --key-file KEY_FILE --input BUNDLE_FILE\nrestore --key-file KEY_FILE --input BUNDLE_FILE --target NEW_DIRECTORY\n\nAll commands accept --dir and --config. No keys or synthetic prices are bundled. Recovery creates a new identity and blocks run/collect pending review.\n");return;
+    process.stdout.write("Blackwell Index node\n\nsetup [--dir PATH] [--providers oracle-public,azure-retail] [--peers https://NODE]\ncredentials COLLECTOR [ENV_NAME]   save one API key locally using hidden terminal input\nproviders              list supported adapters and key requirements\ncollect                collect real data once and sync peers\nrun                    serve API and collect continuously\nstatus                 inspect local counts, identity and readiness\nreplay --at EPOCH_MS    explore observations known at a historical time\nreproduce --sequence N reproduce an archived snapshot with its exact inputs and configuration\nstudy [--at EPOCH_MS] [--from EPOCH_MS] [--output PRIVATE_JSON]   inspect retained captures; stdout contains counts only\nbackup-keygen --output KEY_FILE\nbackup --key-file KEY_FILE --output BUNDLE_FILE\nbackup-inspect --key-file KEY_FILE --input BUNDLE_FILE\nrestore --key-file KEY_FILE --input BUNDLE_FILE --target NEW_DIRECTORY\nimport-hosted-backup --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --output BUNDLE_FILE   consume signed private export from stdin\n\nAll commands accept --dir and --config. No keys or synthetic prices are bundled. Recovery creates a new identity and blocks run/collect pending review.\n");return;
   }
   const {config,node,store}=load();
   if(command==="status") {output({nodeId:node.options.identity.nodeId,counts:store.counts(),coverage:store.captureCounts(),snapshot:node.snapshot(),history:store.verifyHistory()});store.close();return;}
@@ -161,4 +217,4 @@ async function main():Promise<void> {
   process.on("SIGTERM",stop);process.on("SIGINT",stop);
   await cycle();
 }
-main().catch(e=>{process.stderr.write(`${e instanceof Error?e.message:"Command failed"}\n`);process.exitCode=1;});
+main().catch(e=>{process.stderr.write(`${command==="import-hosted-backup"?"HOSTED_BACKUP_IMPORT_FAILED":e instanceof Error?e.message:"Command failed"}\n`);process.exitCode=1;});

@@ -2,7 +2,7 @@
 
 Research and diagnostic observation date: **September 6, 2026**. An implemented connector, an approved contributor, and a currently available price are separate states. `config/catalog.json` is a discovery inventory; the network registry controls accepted sources and rights. An empty model list means coverage has not been verified, rather than a claim that a provider has no Blackwell hardware.
 
-The repository implements ten collectors, including three public catalog sources. It does not yet cover every provider. Additional official APIs and commercial feeds are listed below with their outstanding work. Test fixtures exercise parsing and failures; no fixture is used as a live data source.
+The repository implements eleven collectors, including three public catalog sources. It does not yet cover every provider. Additional official APIs and commercial feeds are listed below with their outstanding work. Test fixtures exercise parsing and failures; no fixture is used as a live data source.
 
 ## Implemented collectors
 
@@ -18,6 +18,7 @@ The repository implements ten collectors, including three public catalog sources
 | `aws-pricing` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`; `AWS_SESSION_TOKEN` for temporary credentials | Supported Linux P6 instance catalog prices; Capacity Block metadata retained | Unknown | Implemented with the official AWS SDK; live account credentials required |
 | `hyperstack-pricebook` | `HYPERSTACK_API_KEY` | Documented eight-GPU B200/B300 configurations; undiscounted open-ended list rates | Qualitative configuration stock | Implemented against official schemas; no live authenticated verification |
 | `shadeform-instances` | `SHADEFORM_API_KEY` plus reviewed billing currency and evidence | B200/B300 account-specific reseller quotes, excluded from the public-list cohort | Regional available/unavailable | No live key or written currency confirmation supplied |
+| `prime-intellect-availability` | `PRIME_INTELLECT_API_KEY`, Availability → Read | Complete supported B200/B300 USD account-specific bundles; GB200/GB300 discovery only | Qualitative configuration stock; no fleet quantity | Implemented against official schema and SDK; no live authenticated verification |
 
 Collection never provisions, reserves, or purchases GPU capacity. API keys remain in the operator's environment. The collector returns `NO_KEY` without a request when credentials are absent. Do not paste credentials into a registry, observation, issue, or source URL. Runpod requires its key in the documented query parameter; evidence URLs remove that parameter.
 
@@ -102,7 +103,7 @@ The collector requires every component's current price, region and unit to match
 | Crusoe | [Customer API capacities integration](https://docs.crusoecloud.com/reference/mcp-server), [pricing](https://www.crusoe.ai/cloud/pricing) | API key pair, customer account and authoritative Blackwell price feed; capacity alone is not a price |
 | Hyperstack | [Pricebook API](https://docs.hyperstack.cloud/docs/api-reference/get-pricebook/) | Three-endpoint collector implemented; obtain key, live schema verification and source rights; discounted/dated rates remain excluded |
 | Shadeform | [Instance types API](https://docs.shadeform.ai/api-reference/instances/instances-types) | Collector implemented; obtain key, written USD billing confirmation and retrieval/publication permission; verify underlying provider ownership |
-| Prime Intellect | [Availability API](https://docs.primeintellect.ai/api-reference/check-gpu-availability) | Bearer key with Availability Read; pagination, GPU count and price-unit validation; underlying provider deduplication |
+| Prime Intellect | [Availability API](https://docs.primeintellect.ai/api-reference/availability/get-gpu-availability) | Collector implemented and disabled; obtain Availability Read key, written data rights and live complete-bundle reconciliation; verify GB hardware/procurement and underlying provider ownership |
 | TensorDock | [Provider documentation](https://docs.tensordock.com/) | Obtain current API schema and verify Blackwell inventory; no guessed legacy endpoint is implemented |
 | Verda | [Pricing and billing](https://docs.verda.com/welcome-to-verda/pricing-and-billing) | Public collector live-verified; confirm publication rights, location/availability semantics and procurement minimums |
 | Gcore | [GPU price list](https://gcore.com/pricing/ai) | Public B300 EUR pricing and GB300 sales contact; approved currency conversion and contract cohort required |
@@ -116,11 +117,13 @@ AWS's [Capacity Blocks page](https://aws.amazon.com/ec2/capacityblocks/pricing/)
 
 [Hyperstack and Shadeform implementation notes](ADDITIONAL_PROVIDERS.md) document credential setup, exact joins, currency requirements and unsupported cases. Existing local node configurations are not silently migrated: explicitly add new collector IDs and reviewed registry entries before enabling them.
 
+[Prime Intellect implementation notes](PRIME_INTELLECT.md) document exact USD bundle composition, sequential pagination and account scope. The source starts disabled with all data rights unapproved. Its B200/B300 account-specific observations cannot enter the current public-list cohort. GB200/GB300 responses remain private discovery evidence until hardware and procurement details are reviewed.
+
 The intended unit is the rental bundle's USD cost divided by physical accelerator-hours. CPU, memory, interconnect and local storage can be bundled differently by provider; this is not a separately priced bare GPU chip. Preserve included resources, topology and minimum order. Optional egress, taxes, enterprise software and persistent storage are not silently added or subtracted.
 
 GB200 and GB300 denote Grace Blackwell system families. Their documentation can describe the contained accelerators as B200 or B300. Classification follows the system SKU first: a GB200 observation belongs only to GB200. An NVL72 rack has 72 accelerators; a four-GPU node inside that rack has four. Minimum order and instance GPU count are different fields.
 
-Multiple nodes collecting one provider do not create multiple economic providers. Neither API pagination nor a large regional catalog earns additional market weight. Shadeform/Prime/Lepton quotes can refer to the same underlying compute provider, and Vast/TensorDock hosts can resell common supply. The approved registry must resolve those dependencies.
+Multiple nodes collecting one provider do not create multiple economic providers. Neither API pagination nor a large regional catalog earns additional market weight. Shadeform, Prime Intellect and Lepton quotes can refer to the same underlying compute provider, and Vast/TensorDock hosts can resell common supply. The approved registry must resolve those dependencies.
 
 The [IOSCO benchmark principles](https://www.iosco.org/library/pubdocs/pdf/IOSCOPD415.pdf) support transparent data sufficiency, input hierarchy, governance, review and audit. They do not supply a universal GPU weighting formula. [Equal weighting is a conventional index choice](https://www.spglobal.com/spdji/en/methodology/article/index-mathematics-methodology/), but a 25% weight for each Blackwell family is a disclosed basket design, not an observed market share. Transaction-volume weighting requires verified executed GPU-hours; listing counts and advertised fleet capacity are insufficient.
 

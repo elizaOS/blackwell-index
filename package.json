@@ -15,5 +15,5 @@
     "verify": "bun run typecheck && bun test"
   },
   "dependencies": { "zod": "4.1.5", "@aws-sdk/client-pricing": "3.1127.0" },
-  "devDependencies": { "@types/bun": "1.3.10", "typescript": "5.9.3" }
+  "devDependencies": { "@types/bun": "1.3.10", "typescript": "5.9.3", "wrangler": "4.129.0", "miniflare": "5.20260903.0-alpha" }
 }

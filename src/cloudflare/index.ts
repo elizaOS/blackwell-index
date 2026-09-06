@@ -1,10 +1,11 @@
-import { DurableObject } from "cloudflare:workers";
+import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { generateIdentity } from "../crypto";
 import { OracleNode } from "../network";
 import type { NodeIdentity } from "../types";
 import { collectCycle } from "./collect";
 import { runtimeConfig, type WorkerEnvironment } from "./config";
 import { CloudflareJournal, DurableSqlDriver } from "./sql";
+import { createHostedExport } from "../hosted-export";
 
 const NODE_NAMES = ["primary", "secondary"] as const;
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
@@ -78,6 +79,25 @@ export class SbxNode extends DurableObject<WorkerEnvironment> {
     } finally {
       await this.ctx.storage.setAlarm(Date.now() + this.config.intervalMs);
     }
+  }
+
+  /** RPC only. No fetch route dispatches to this method; private key/KV are never exported. */
+  async exportRecovery(nodeName: "primary" | "secondary"): Promise<Response> {
+    if(!NODE_NAMES.includes(nodeName))throw new Error("UNKNOWN_NODE");
+    const collection=this.ctx.storage.kv.get<CollectionState>("collection:v1");
+    if(collection?.status==="RUNNING")throw new Error("COLLECTION_RUNNING_RETRY_EXPORT");
+    const body=createHostedExport(this.journal,this.identity,{nodeName,operatorGroup:this.config.operatorGroup,release:this.release,
+      network:this.config.network,intervalMs:this.config.intervalMs,registry:this.config.registry,methodology:this.config.methodology});
+    // Response bodies stream separately from RPC values; the snapshot also has its own stricter size cap.
+    return new Response(body,{headers:{"content-type":"application/vnd.sbx.hosted-journal+json","cache-control":"no-store"}});
+  }
+}
+
+/** Cloudflare account/service-binding authority only; not an HTTP administration endpoint. */
+export class RecoveryService extends WorkerEntrypoint<WorkerEnvironment> {
+  async exportRecovery(nodeName: "primary" | "secondary"): Promise<Response> {
+    if(!NODE_NAMES.includes(nodeName))throw new Error("UNKNOWN_NODE");
+    return this.env.SBX_NODES.getByName(nodeName).exportRecovery(nodeName);
   }
 }
 

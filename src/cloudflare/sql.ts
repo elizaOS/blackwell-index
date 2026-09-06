@@ -31,7 +31,7 @@ export class DurableSqlDriver implements SqlDriver {
 
 /** Raw evidence stays private. Chunking accommodates Cloudflare's 2 MB row limit. */
 export class CloudflareJournal extends Journal {
-  constructor(driver: DurableSqlDriver) {
+  constructor(driver: SqlDriver) {
     super(driver);
     this.db.exec("CREATE TABLE IF NOT EXISTS evidence_chunks (hash TEXT NOT NULL, part INTEGER NOT NULL, body BLOB NOT NULL, PRIMARY KEY(hash,part)); CREATE TABLE IF NOT EXISTS evidence_sizes (hash TEXT PRIMARY KEY, bytes INTEGER NOT NULL, parts INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS collection_captures (id INTEGER PRIMARY KEY, collected_at INTEGER NOT NULL)");
   }

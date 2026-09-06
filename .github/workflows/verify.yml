@@ -19,6 +19,10 @@ jobs:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
       - run: bun run verify
+      - run: bunx wrangler deploy --dry-run --outdir data/hosted-recovery-build
+        env:
+          WRANGLER_SEND_METRICS: "false"
+      - run: node scripts/verify-hosted-runtime.mjs
       - run: docker build -t blackwell-index:verify .
       - run: sh scripts/docker-smoke.sh blackwell-index:verify
   pyth-protocol:
