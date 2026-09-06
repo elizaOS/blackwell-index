@@ -45,6 +45,61 @@ function persisted(path:string) {
   const db=new Database(path,{readonly:true,strict:true});
   try{return db.query("SELECT format,payload,payload_hash FROM pyth_readback_state WHERE id=1").get() as {format:string;payload:string;payload_hash:string}|null;}finally{db.close();}
 }
+
+test("signed CLI reopens protected state, carries timestamps and rolls back a rejected later feed",async()=>{
+  // Synthetic EVM bytes and RPC acceptance exercise orchestration/storage only,
+  // not cryptographic verification or genuine Pyth publisher admission.
+  const f=fixture(),sourceBefore=f.store.counts();let now=f.now,attempt=0,body="";
+  save(join(f.root,"config/pyth-readback.json"),{...f.configuration,maxFeedsPerRequest:1,signedEvm:{network:"base",simulationFrom:"0x"+"1".repeat(40)}});
+  const word=(value:bigint)=>BigInt.asUintN(256,value).toString(16).padStart(64,"0");
+  const json=(value:unknown)=>new Response(JSON.stringify(value),{headers:{"content-type":"application/json"}});
+  const dependencies={...f.dependencies,now:()=>now,fetch:(async(input,init)=>{
+    const url=String(input);f.requests.push(url);
+    if(url===PYTH_SYMBOLS_URL)return json(f.catalog);
+    const query=JSON.parse(String(init?.body));
+    if(url===PYTH_LATEST_PRICE_URL) {
+      expect(query.formats).toEqual(["evm"]);expect(query.parsed).toBe(false);
+      const feed=f.payload.parsed.priceFeeds.find(value=>value.priceFeedId===query.priceFeedIds[0])!;
+      let generated=BigInt(feed.feedUpdateTimestamp);
+      if(attempt===2)generated+=feed.priceFeedId===1?1000n:-1n;
+      body="93c7d375"+word(BigInt(now)*1000n).slice(-16)+"0401"+word(BigInt(feed.priceFeedId)).slice(-8)+"05"+
+        "00"+word(BigInt(feed.price)).slice(-16)+"03"+"0003"+"04"+word(BigInt(feed.exponent)).slice(-4)+
+        "05"+word(1n).slice(-16)+"0c01"+word(generated).slice(-16);
+      return json({evm:{encoding:"hex",data:"2a22999a"+"01".repeat(65)+(body.length/2).toString(16).padStart(4,"0")+body}});
+    }
+    expect(url).toBe("https://mainnet.base.org");expect(new Headers(init?.headers).has("authorization")).toBe(false);
+    let result:unknown;
+    if(query.method==="eth_chainId")result="0x2105";
+    else if(query.method==="eth_getBlockByNumber")result={number:"0x123",hash:"0x"+"a".repeat(64),timestamp:"0x"+Math.floor(now/1000).toString(16)};
+    else if(query.method==="eth_getCode")result="0x6000";
+    else if(query.method==="eth_getBalance")result="0x10";
+    else if(query.method==="eth_call") {
+      const data=query.params[0].data;
+      if(data==="0x54fd4d50")result="0x"+word(32n)+word(5n)+Buffer.from("0.1.1").toString("hex").padEnd(64,"0");
+      else if(data==="0xbac12f87")result="0x"+word(1n);
+      else result="0x"+word(64n)+"0".repeat(24)+"01".repeat(20)+word(BigInt(body.length/2))+body.padEnd(Math.ceil(body.length/64)*64,"0");
+    } else throw Error("Unexpected isolated RPC method");
+    return json({jsonrpc:"2.0",id:query.id,result});
+  }) as typeof fetch};
+  expect(await runPythReadbackCli([...f.args,"--init-state"],dependencies)).toBe(0);
+  const first=persisted(f.statePath)!;const accepted=JSON.parse(first.payload).feeds;
+  expect(accepted).toHaveLength(5);expect(first.payload_hash).toBe(hash(JSON.parse(first.payload)));
+  expect(f.reports.at(-1)!.signatureVerification).toBe("CONTRACT_ACCEPTED_SINGLE_RPC");
+  expect(existsSync(f.lockPath)).toBe(false);expect(statSync(f.statePath).mode&0o777).toBe(0o600);
+  // Each invocation opens and closes the actual protected SQLite state wrapper.
+  attempt=1;now+=1000;
+  expect(await runPythReadbackCli(f.args,dependencies)).toBe(0);
+  expect(f.reports.at(-1)!.status).toBe("UNCHANGED");expect(JSON.parse(persisted(f.statePath)!.payload).feeds).toEqual(accepted);
+  attempt=2;now+=1000;
+  expect(await runPythReadbackCli(f.args,dependencies)).toBe(1);
+  expect(f.reports.at(-1)!.code).toBe("SIGNED_POLICY_FAILED");
+  expect(f.reports.at(-1)!.signatureVerification).toBe("NOT_PERFORMED");
+  const rejected=persisted(f.statePath)!;
+  expect(JSON.parse(rejected.payload).feeds).toEqual(accepted);expect(rejected.payload_hash).toBe(hash(JSON.parse(rejected.payload)));
+  expect(JSON.parse(rejected.payload).consecutiveFailures).toBe(1);
+  expect(existsSync(f.lockPath)).toBe(false);expect(f.store.counts()).toEqual(sourceBefore);
+  expect(JSON.stringify(f.reports)+readFileSync(f.statePath).toString()).not.toContain(TOKEN);
+});
 async function child(f:ReturnType<typeof fixture>,extra:string[]=[],preload?:string,env:Record<string,string>={}) {
   const process=Bun.spawn([globalThis.process.execPath,...(preload?["--preload",preload]:[]),resolve(import.meta.dir,"../src/pyth/readback-cli.ts"),...f.args,...extra],{env,stdout:"pipe",stderr:"pipe"});
   const timer=setTimeout(()=>process.kill("SIGKILL"),15_000);

@@ -24,14 +24,17 @@ On September 6, 2026, a locally held Pyth trial consumer key retrieved a real Cr
 
 Unit tests use isolated wire and RPC fixtures. They test decoding and failure handling, not real cryptographic verification. The live diagnostic is separate evidence, not a substitute for an automated official-contract integration harness.
 
-## Remaining integration
+## Acceptance status
 
-1. Wire the shared readback catalog and binding checks into the signed orchestrator. The pure batch checker now reuses feed policy, but does not itself authenticate bytes or approve a manifest. Require actual approved numeric SBX IDs, symbols, exponents, channels, quote currency and minimum publisher counts.
-2. Extend verification coverage for the integrated signed transport, including long multi-batch runs and changes during verification. The implementation now verifies every batch and requires the complete expected feed set.
-3. Independently review the source/price freshness, exact mantissa, confidence, expected-print and replay checks applied to contract-returned bytes. They now run at completion, including approval-expiry checks.
-4. Reproduce expected prints from the local journal. Do not trust command-line prices or unsigned adjacent JSON as expected SBX evidence.
-5. Preserve atomic acceptance and existing private recovery state. A later failed batch must not advance earlier accepted timestamps.
-6. Add automated official-contract integration tests and complete full release verification of the existing command's signed mode. Keep production activation separate from merging software.
+The integrated path uses existing manifest and catalog checks, journal-reproduced expectations through the command wrapper, and the existing per-feed policy. Tests cover unsigned fallback rejection, later-batch verification failure, policy failure after restart, persistence failure, approval expiry, stale data during verification and cumulative RPC-byte exhaustion. All RPC bodies now count against the same 16 MiB tick budget as catalog and price responses.
+
+Remaining software acceptance:
+
+1. Extend the protected SQLite command-wrapper coverage to subprocess/host interruption. Current tests reopen the actual state wrapper for initial acceptance, carried timestamps and rejected later-feed rollback, and verify permissions, hashes and lock cleanup; they use synthetic RPC transport rather than cryptographic proof.
+2. Add an automated official-contract harness using real cryptographic signatures. Fixture RPC acceptance is not cryptographic evidence.
+3. Complete full hosted tests and deployment checks for the exact final commit, then review before merging. Keep production activation separate.
+
+Actual approved SBX numeric IDs, symbols, exponents, channels, quote currency and publisher thresholds must still be supplied. Both readback modes use the same feed-policy implementation; there is no separate signed-mode policy layer.
 
 Publisher admission, source rights, independent operators, assigned feeds and genuine qualification history remain launch prerequisites. A consumer trial key does not satisfy them.
 
