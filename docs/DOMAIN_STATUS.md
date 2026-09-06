@@ -31,22 +31,10 @@ Authoritative registry sources:
 
 All four registry records list `jessica.ns.cloudflare.com` and `matt.ns.cloudflare.com`, and prohibit client transfers. Registrar handle `1910` identifies Cloudflare.
 
-## Deployment status at handoff
+## Deployment verification
 
-Registration is complete. Site deployment, host routing and TLS acceptance are separate work.
+The `blackwell-index` Cloudflare Worker was deployed on 6 September 2026. All six configured hostnames resolved and passed HTTPS verification. The index, ALTX and primary/secondary node hosts returned 200. The two short index domains returned canonical 308 redirects. A records for the four registered domains were also read from Cloudflare or Google public DNS resolvers.
 
-- Authoritative nameservers respond for all four zones.
-- No A records were returned by the authoritative nameserver at handoff.
-- HTTPS requests could not resolve the domains at handoff. A production HTTPS response has not been verified.
-- Recursive resolver propagation was partial immediately after registration: `blackwellindex.com` and `altx.exchange` had NS answers; the two newest names still had negative cached answers.
-- Do not infer DNSSEC activation or certificate issuance from the free features listed in checkout; verify both during deployment.
+Both landing pages and the served UI assets matched the committed source bytes. See the [release evidence](RELEASE_2026-09-06.md) for the exact revision, Worker version and node results, and [Cloudflare deployment](CLOUDFLARE.md) for the active route configuration.
 
-Remaining work:
-
-1. Route `altx.exchange` to the minimal ALTX landing page.
-2. Route `blackwellindex.com` to the index and node API.
-3. Route `blackwell.fyi` and `blackwell.today` to the index, preferably with canonical redirects.
-4. Confirm A/AAAA or flattened CNAME answers, HTTPS certificates, host-specific page content and redirects from an external resolver.
-5. Record the production project and final verification evidence here after deployment.
-
-For Cloudflare Pages, add the custom domain to the actual Pages project before adding its DNS record. An apex domain must be a zone in the same Cloudflare account as that project. [Cloudflare custom-domain documentation](https://developers.cloudflare.com/pages/configuration/custom-domains/)
+Registration, DNS routing and initial TLS are complete. Automatic renewal remains off; DNSSEC activation and future certificate renewal are not established by this acceptance check.

@@ -4,8 +4,8 @@ This checklist is the completion contract for the public oracle. Software tests,
 
 | Requirement | Current evidence | Next action |
 | --- | --- | --- |
-| Four domains | Purchased for $78.06; Cloudflare and registry records confirmed | Route websites and node endpoints; verify TLS and renewal policy |
-| Public open source repository | Source, license and tests prepared under elizaOS/blackwell-index | Publish exact tested commit and inspect hosted checks |
+| Four domains | Purchased for $78.06; DNS, HTTPS, both sites and canonical redirects verified | Assign renewal owner; automatic renewal is off |
+| Public open source repository | Public elizaOS/blackwell-index, source and tests pushed | Inspect terminal hosted checks for the exact final revision |
 | Real source collection | Public Oracle all-four and Azure GB200 retrievals verified | Continue scheduled collection; inspect coverage and source errors |
 | AWS credentials | Not supplied | Read-only Pricing IAM principal, access key/secret or equivalent approved runtime identity; optional session token |
 | Google credentials and SKU map | Not supplied | Enable Cloud Billing Catalog API; API key/project; capture complete Blackwell component SKUs and reviewed instance mapping |
@@ -15,13 +15,13 @@ This checklist is the completion contract for the public oracle. Software tests,
 | Remaining providers | Coverage/discovery matrix recorded | Provider price APIs or documented contributor feeds for each supported hardware family |
 | Source rights | Production derive/redistribution flags unset | Evidence covering automated retrieval, raw retention, public per-provider data, derived benchmark and onchain financial-reference use; identify which operator is covered |
 | Provider weights | Unset | Select eligible comparable sources, verify economic groups, approve fixed constituent sets per model and effective date |
-| Independent node operators | Local identities and deployment tooling | At least three independent organizations; verify ownership, registry and source access; same-account replicas count as one |
+| Independent node operators | Two deployed persistent identities, both controlled by elizaos-cloudflare | At least three independent organizations; four are needed to retain a greater-than-two-thirds quorum with one unavailable; verify source access and ownership |
 | Pyth accepted publisher | Not supplied | Obtain acceptance as benchmark administrator or onboard first-party providers; confirm current Pro ingress |
 | Pyth feed IDs | No matching SBX/Blackwell symbol in queried public catalog | Assigned per-provider/model/composite IDs, metadata, minimum publishers and permitted key bindings |
 | Pyth signer | Integration tested against official agent locally | Separate protected production key, relayer access, funded infrastructure if required by agreed terms |
 | Pyth consumer access | Not supplied | Hermes/Pro API account and appropriate public redistribution terms |
 | Onchain verification | Not performed | Select supported target chain, official upgraded contract, RPC and gas wallet; submit and inspect actual signed update |
-| Production operations | Persistent node and deployment code | Monitors, paging owner, backups, restore, key rotation, outages and peer-failure exercises |
+| Production operations | Two hosted nodes collecting real Oracle/Azure data; scheduled production recurrence and local restart verified | Production redeployment, monitors, paging owner, backups, restore, key rotation, outages and peer-failure exercises |
 | Historical validation | Real collection begins now | Accumulate genuine coverage; obtain licensed historical records; no synthetic backfill or future membership look-ahead |
 | External audit and benchmark review | Internal independent code review and tests | Security assessment, methodology validation, legal/data-rights review and signed release decision |
 

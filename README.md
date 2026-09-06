@@ -103,4 +103,14 @@ The published port binds to localhost; use an HTTPS reverse proxy for public pee
 
 The [launch checklist](docs/LAUNCH_TODO.md) names the required accounts, source permissions, Pyth onboarding, external verification and operating evidence. [Domain status](docs/DOMAIN_STATUS.md) records the four requested registrations. Private keys, raw account data and private business documents are not included in this repository.
 
+Live development sites: [Blackwell Index](https://blackwellindex.com) and [ALTX](https://altx.exchange). See the [release evidence](docs/RELEASE_2026-09-06.md) and [operating costs](docs/OPERATING_COSTS.md). The deployed nodes collect real data but do not publish prices while the launch requirements remain unmet.
+
+After deployment, verify the committed source, both nodes and the explicitly unavailable public feeds:
+
+```sh
+bun scripts/verify-deployment.ts --release <deployed-40-character-commit-SHA>
+```
+
+This read-only check targets the development-network contract, not a production benchmark. It must be revised when an approved public feed is deliberately launched.
+
 MIT licensed. Contributions should include official source documentation, exact unit/model mapping and tests covering missing, changed and invalid responses.
