@@ -1,6 +1,6 @@
 # Streaming recovery implementation plan
 
-Status: implementation and acceptance in progress. The checkpoint, bounded encrypted container, chunk-aware restore and streaming study are implemented; the full-period and exact-release gates below remain explicit. See [operator instructions](STREAMING_RECOVERY.md) and the [acceptance record](HOSTED_ACCEPTANCE_2026-09-06.md). This plan does not change publication eligibility or authorize a paid service.
+Status: functional release implemented, deployed and verified for the documented three-operator 31-day workload and maximum-candidate runtime fixture. Both live journals passed encrypted inspection and restore. The account-specific capacity, maximum-operator retention, local re-backup and offsite operating requirements below remain open. See [operator instructions](STREAMING_RECOVERY.md) and the exact [acceptance record](HOSTED_ACCEPTANCE_2026-09-06.md). This plan does not change publication eligibility or authorize a paid service.
 
 ## Decision
 
