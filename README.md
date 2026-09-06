@@ -126,6 +126,10 @@ Self-hosted nodes support encrypted V1 journal backups and verified restoration 
 
 The [retained-data operating study](docs/OPERATING_STUDY.md) analyzes private captured observations without fetching prices or filling gaps. `study --stream` supports full-period aggregates without retaining point arrays. It reports coverage, cadence and dated changes, not trading returns or benchmark approval. Thirty-day qualification remains `NOT_ESTABLISHED`; parser tests and calendar span do not complete that gate.
 
+For B200 derivative research, `bun src/cli.ts shadow --output data/studies/b200-shadow.json` creates a private, read-only [qualification and stress report](docs/B200_SHADOW_STUDY.md). It preserves production gates and isolates hypothetical source-loss and position scenarios. See the [draft contract](docs/B200_CONTRACT_PROPOSAL.md) and [unsent Pyth/operator packet](docs/PYTH_PARTNER_PACKET.md) for the proposed division of responsibility and pending decisions.
+
+The [delivery comparison](docs/ORACLE_DELIVERY_OPTIONS.md) distinguishes Pyth's managed HIP-3 service, standard Pyth publication, Switchboard custom feeds and Chainlink DataLink/Streams. A production route remains unselected.
+
 The [launch checklist](docs/LAUNCH_TODO.md) names the required accounts, source permissions, Pyth onboarding, external verification and operating evidence. [Domain status](docs/DOMAIN_STATUS.md) records the four requested registrations. Private keys, raw account data and private business documents are not included in this repository.
 
 Live development sites: [Blackwell Index](https://blackwellindex.com) and [ALTX](https://altx.exchange). See the [initial release evidence](docs/RELEASE_2026-09-06.md), [provider and recovery expansion](docs/EXPANSION_2026-09-06.md) and [operating costs](docs/OPERATING_COSTS.md). The deployed nodes collect real data but do not publish prices while the launch requirements remain unmet.
