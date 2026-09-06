@@ -31,6 +31,20 @@ redistributing upstream code or enabling automated dependency distribution.
 
 ## Run
 
+Use the checked runner after obtaining the external prerequisites:
+
+```sh
+bun run pyth:contract-test --checkout /absolute/path/to/pyth-crosschain --forge /absolute/path/to/forge
+```
+
+It checks the upstream and dependency commits and cleanliness before and after
+execution, uses an isolated Forge configuration with FFI disabled, and requires
+all six named tests to pass. Missing dependencies or compiler are failures, not
+skips. It does not download prerequisites. Temporary build artifacts are retained
+under the operating system's temporary directory, not the source repository.
+
+For manual inspection, the equivalent low-level command is below.
+
 From the SBX repository root, set `SBX_PYTH_CHECKOUT` to the absolute path of the
 verified external checkout. The command deliberately disables downloads. Build
 artifacts go to a new temporary directory, outside the public repository.
