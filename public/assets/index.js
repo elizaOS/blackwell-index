@@ -56,16 +56,14 @@ function renderWeights(feed) {
 }
 
 function renderProviders(feeds) {
-  const providers = [...new Set(feeds.filter(feed => feed.kind === "PROVIDER").map(feed => feed.provider))].sort();
+  const providers = [...new Set(feeds.filter(feed => feed.kind === "PROVIDER" && qualified(feed)).map(feed => feed.provider))].sort();
   const body = document.getElementById("provider-rows"); body.replaceChildren();
   if (!providers.length) {
-    const row = document.createElement("tr"); const cell = document.createElement("td"); cell.colSpan = 5; cell.className = "empty-state"; cell.textContent = "No provider feeds are configured in this snapshot."; row.append(cell); body.append(row);
+    const row = document.createElement("tr"); const cell = document.createElement("td"); cell.colSpan = 5; cell.className = "empty-state"; cell.textContent = "No current provider prices."; row.append(cell); body.append(row);
   }
-  let available = 0;
   for (const provider of providers) {
     const row = document.createElement("tr"); const label = document.createElement("th"); label.scope = "row"; label.textContent = PROVIDERS[provider] ?? provider; row.append(label);
     const matches = feeds.filter(feed => feed.kind === "PROVIDER" && feed.provider === provider);
-    if (matches.some(qualified)) available++;
     for (const model of MODELS) {
       const feed = matches.find(item => item.model === model); const cell = document.createElement("td"); cell.textContent = formatPrice(feed);
       if (qualified(feed)) { cell.title = `Observed ${timeLabel(feed.observedAt)}`; }
@@ -74,7 +72,7 @@ function renderProviders(feeds) {
     }
     body.append(row);
   }
-  setText("provider-summary", `${available} / ${providers.length} available`);
+  setText("provider-summary", providers.length ? `${providers.length} providers` : "");
 }
 
 function render(snapshot) {
