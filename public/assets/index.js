@@ -39,22 +39,6 @@ export function validateSnapshot(data) {
   return data;
 }
 
-function renderWeights(feed) {
-  const container = document.getElementById("model-weights");
-  container.replaceChildren();
-  const weights = feed?.weights;
-  if (!weights || MODELS.some(model => !Number.isSafeInteger(weights[model]) || weights[model] <= 0)) {
-    const empty = document.createElement("span"); empty.textContent = "Not available"; container.append(empty); return;
-  }
-  const total = MODELS.reduce((sum, model) => sum + weights[model], 0);
-  for (const model of MODELS) {
-    const item = document.createElement("div"); item.className = "weight-item";
-    const label = document.createElement("span"); label.textContent = model;
-    const weight = document.createElement("span"); weight.textContent = `${(weights[model] / total * 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
-    item.append(label, weight); container.append(item);
-  }
-}
-
 function renderProviders(feeds) {
   const providers = [...new Set(feeds.filter(feed => feed.kind === "PROVIDER" && qualified(feed)).map(feed => feed.provider))].sort();
   const body = document.getElementById("provider-rows"); body.replaceChildren();
@@ -77,25 +61,21 @@ function renderProviders(feeds) {
 function render(snapshot) {
   const composite = snapshot.feeds.find(feed => feed.kind === "COMPOSITE" && feed.id === "SBX");
   setText("composite-price", formatPrice(composite));
-  renderWeights(composite);
   for (const model of MODELS) {
     const feed = snapshot.feeds.find(item => item.kind === "MODEL" && item.model === model); const card = document.querySelector(`[data-model="${model}"]`);
     card.querySelector(".model-price").textContent = formatPrice(feed);
     card.querySelector(".model-price").setAttribute("aria-label", qualified(feed) ? `${formatPrice(feed)} per GPU-hour` : `Unavailable: ${reason(feed)}`);
   }
   renderProviders(snapshot.feeds);
-  setText("calculated-at", timeLabel(snapshot.calculatedAt)); document.getElementById("calculated-at").dateTime = new Date(snapshot.calculatedAt).toISOString();
-  setText("methodology-version", snapshot.methodologyVersion); setText("benchmark-status", "Centralized demo · Not published to Pyth");
   setText("connection-status", "");
 }
 
 function unavailable(message) {
   lastSnapshot = null;
   setText("connection-status", message);
-  setText("composite-price", "—"); renderWeights(null);
+  setText("composite-price", "—");
   for (const card of document.querySelectorAll("[data-model]")) { card.querySelector(".model-price").textContent = "—"; card.querySelector(".model-price").setAttribute("aria-label", "Unavailable: no current snapshot"); }
   const body = document.getElementById("provider-rows"); body.replaceChildren(); const row = document.createElement("tr"); const cell = document.createElement("td"); cell.colSpan = 5; cell.className = "empty-state"; cell.textContent = "Prices unavailable. Retrying automatically."; row.append(cell); body.append(row);
-  setText("calculated-at", "—"); document.getElementById("calculated-at").removeAttribute("datetime"); setText("methodology-version", "—"); setText("benchmark-status", "Unavailable");
 }
 
 async function refresh() {
