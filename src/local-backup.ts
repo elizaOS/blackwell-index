@@ -12,6 +12,7 @@ import { canonical, hash, nodeIdFor } from "./crypto";
 import { HOSTED_TABLES } from "./hosted-export";
 import type { SqlDriver } from "./journal";
 import { archiveLocalRecoveryMetadata } from "./local-backup-metadata";
+import { archivePythRuntimeState, PYTH_RUNTIME_TABLES, validatePythRuntimeSchema } from "./pyth/recovery-state";
 import { backupStreamFrames, inspectStreamBackup, verifyStreamDatabase, STREAM_RECOVERY_LIMITS, type StreamRecoveryOptions } from "./stream-recovery";
 import type { NodeIdentity } from "./types";
 import { parseMethodology, parseRegistry } from "./validation";
@@ -59,9 +60,10 @@ function databaseBytes(database:Database,options:LocalStreamBackupOptions):numbe
 }
 /** Never execute source-supplied views/triggers or silently omit additional tables. */
 function schema(database:Database):void {
-  const names=new Set<string>([...HOSTED_TABLES.map(table=>table.name),"local_journal_storage","archive_recovery_provenance","sqlite_sequence"]);
+  const names=new Set<string>([...HOSTED_TABLES.map(table=>table.name),...PYTH_RUNTIME_TABLES,"local_journal_storage","archive_recovery_provenance","sqlite_sequence"]);
   const rows=database.query("SELECT type,name,sql FROM sqlite_master WHERE type IN ('table','view','trigger') LIMIT 64").all() as {type:string;name:string;sql:string|null}[];
   if(rows.length>=64||rows.some(row=>row.type!=="table"||!names.has(row.name)||/\bVIRTUAL\b/i.test(row.sql??"")))fail("SCHEMA_REVIEW_REQUIRED");
+  validatePythRuntimeSchema(database as unknown as SqlDriver);
   for(const table of HOSTED_TABLES) {
     if(!rows.some(row=>row.name===table.name))fail("CHUNKED_JOURNAL_REQUIRED");
     const columns=database.query(`PRAGMA table_xinfo(${table.name})`).all() as {name:string;hidden:number}[];
@@ -110,6 +112,7 @@ export async function backupLocalStreamNode(root:string,configPath:string,output
     databaseBytes(copy,options);disk(directory,0,options);schema(copy);
     const journal=new ChunkedJournal(copy as unknown as SqlDriver);
     const recoveryProvenanceHash=archiveLocalRecoveryMetadata(journal);
+    const pythStateHash=archivePythRuntimeState(journal,Date.now());
     // Current files can legitimately differ from historical snapshot configurations after restore.
     // Archive both on the copy; do not rewrite historical configurations or the running source.
     journal.saveConfiguration(initial.registry);journal.saveConfiguration(initial.methodology);
@@ -117,7 +120,7 @@ export async function backupLocalStreamNode(root:string,configPath:string,output
     databaseBytes(copy,options);disk(directory,0,options);
     const metadata={nodeName:"local" as const,operatorGroup:options.operatorGroup,release:options.expectedRelease,
       network:initial.config.network,intervalMs:initial.config.intervalMs,registry:initial.registry,methodology:initial.methodology,
-      ...(recoveryProvenanceHash?{recoveryProvenanceHash}:{})};
+      ...(recoveryProvenanceHash?{recoveryProvenanceHash}:{}),...(pythStateHash?{pythStateHash}:{})};
     const descriptor=beginCheckpoint(journal,initial.identity,metadata,{ttlMs:ARCHIVE_LIMITS.maxTtlMs});
     databaseBytes(copy,options);disk(directory,0,options);
     // Reject corrupt retained content before creating the ciphertext. The independent

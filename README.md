@@ -4,6 +4,8 @@ Open source collectors and reproducible price feeds for NVIDIA B200, B300, GB200
 
 **Status: development network. Pyth publication is pending onboarding and feed approval.** Public pages never substitute generated prices. An unavailable feed has no current value.
 
+The website separates **Demo** and **Real** modes. Demo is a centralized view of current collected prices, not the governed SBX oracle or a Pyth feed. Real uses `/v1/feeds`, keeps the oracle's approval and quorum gates, and never falls back to demo prices. [Demo scope and permissions](docs/CENTRALIZED_DEMO.md).
+
 ## Run a node
 
 Install [Bun](https://bun.sh) 1.3.14, then:
@@ -56,6 +58,7 @@ Read the [methodology](docs/METHODOLOGY.md), [source research](docs/PROVIDERS.md
 | `GET /healthz` | Process liveness |
 | `GET /v1/ready` | Benchmark publication readiness; 503 when unavailable |
 | `GET /v1/status` | Node identity, configuration hashes and local counts |
+| `GET /v1/demo` | Separate centralized view of current prices with applicable source permissions; never publishable or Pyth-backed |
 | `GET /v1/feeds` | Provider feeds, four model feeds, SBX and reasons for missing values |
 | `GET /v1/feeds/SBX` | One feed; 503 when it has no current price |
 | `GET /v1/methodology` | Versioned calculation rules |
@@ -71,6 +74,20 @@ Collector signatures bind exact bytes to keys. They do not prove that a provider
 The adapter targets the current official `pyth-lazer-agent` 0.16.0. It prepares signed-agent submissions only for approved feed bindings, exact units and current data. Pyth Core migrated to Pro infrastructure in August 2026; the old Pythnet validator workflow is not the deployment plan.
 
 No SBX feed IDs, publisher credentials or Pyth approvals are bundled. Pyth acceptance is required for each publisher and feed. A local agent acknowledgement is labeled `QUEUED_LOCAL`; it is not proof of a published oracle. See [Pyth architecture, setup and readback requirements](docs/PYTH.md).
+
+The separate [authenticated readback monitor](docs/PYTH_READBACK.md) checks approved Pro feeds against retained local snapshots. It uses a backend `PYTH_PRO_API_KEY`, a private state database and the node's approved Pyth manifest. The supplied configuration is disabled; its example thresholds require review. No signed payload or chain transaction is verified by this offchain monitor.
+
+```sh
+bun run pyth:readback --dir /absolute/private/node \
+  --node-config config/node.local.json --config config/pyth-readback.json \
+  --state data/pyth-readback.sqlite --init-state --once
+```
+
+Use `--init-state` only for a reviewed first bootstrap; omit it on restart to preserve accepted timestamps and retry deadlines. Omit `--once` for an abortable continuous monitor under an operator-owned supervisor. See [Pyth recovery](docs/PYTH_RECOVERY.md) before restoring any publishing node; collector identity rotation alone does not revoke the previous Pyth publisher.
+
+The first chain target is **Base Sepolia, followed by Base mainnet**. Solana and Robinhood Chain follow with separate verification tests. [Chain selection and implementation gates](docs/PYTH_CHAIN_SELECTION.md) distinguishes supported Pyth contracts from an actual SBX integration; no SBX transaction has been verified yet.
+
+`bun run pyth:chain-preflight` checks Base Sepolia's network and Pyth deployment through its fixed public RPC; add `--network base` for Base mainnet. It requires no credentials or gas, submits no transactions and does not verify any price or signed payload. A passed deployment check is not oracle readiness.
 
 A self-hosted node can set `pythManifestPath` in its private configuration to attempt publication after each eligible collection cycle. The runtime checks current feed metadata, keeps durable per-feed timestamps, and connects to a separately running local Pyth agent. Hosted collector nodes do not hold Pyth signing keys.
 

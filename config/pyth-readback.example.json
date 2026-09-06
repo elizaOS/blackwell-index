@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "enabled": false,
+  "tokenEnv": "PYTH_PRO_API_KEY",
+  "channel": "fixed_rate@1000ms",
+  "pollIntervalMs": 30000,
+  "requestTimeoutMs": 10000,
+  "maxAgeMs": 900000,
+  "maxEnvelopeAgeMs": 30000,
+  "maxConfidenceBps": 100,
+  "maxPriceDeviationBps": 100,
+  "quoteCurrency": "USD"
+}

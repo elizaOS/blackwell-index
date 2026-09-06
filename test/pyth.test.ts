@@ -7,6 +7,7 @@ import type { Snapshot } from "../src/types";
 import { PYTH_PROTOCOL, preparePythPublication, priceToPythMantissa, submitToPythAgent, validateAgentUrl, validatePythManifest, verifyPythReadback, type PythManifest, type PythReadback } from "../src/pyth";
 import { publishSnapshot } from "../src/pyth/runtime";
 import { Store } from "../src/store";
+import { PYTH_RUNTIME_SQL } from "../src/pyth/recovery-state";
 
 // Synthetic values in tests are never ingested into the production collector.
 const now = 1_788_700_000_000;
@@ -99,6 +100,24 @@ describe("independent Pyth output checks", () => {
 });
 
 describe("automated Pyth publication tick", () => {
+  test("invalid pre-existing runtime state blocks before any catalog or agent request",async()=>{
+    const store=new Store(":memory:");let calls=0;
+    try {
+      store.db.exec(PYTH_RUNTIME_SQL);
+      store.db.query("INSERT INTO pyth_submission_state VALUES(?,?,?,?,?,?,?)").run("a".repeat(64),12,now*1000,now*1000+1,"invalid","QUEUED_LOCAL",now);
+      const result=await publishSnapshot(snapshot(),manifest(),store,{now:()=>now,fetchCatalog:async()=>{calls++;return catalog;},submit:acknowledge});
+      expect(result.status).toBe("BLOCKED");expect(result.error).toBe("PYTH_RECOVERY_HIGHWATER_INVALID");expect(calls).toBe(0);
+    }finally{store.close();}
+  });
+  test("a future local queue acknowledgement remains unconfirmed and cannot poison recovery",async()=>{
+    const store=new Store(":memory:");
+    try {
+      const result=await publishSnapshot(snapshot(),manifest(),store,{now:()=>now,fetchCatalog:async()=>catalog,submit:async(publication,agentUrl)=>({...await acknowledge(publication,agentUrl),queuedAt:now+1})});
+      expect(result.status).toBe("DELIVERY_UNCONFIRMED");
+      expect(store.db.query("SELECT * FROM pyth_queue_receipts").all()).toEqual([]);
+      expect(store.db.query("SELECT last_status FROM pyth_submission_state").get()).toEqual({last_status:"DELIVERY_UNCONFIRMED"});
+    }finally{store.close();}
+  });
   const acknowledge:typeof submitToPythAgent=async publication=>({status:"QUEUED_LOCAL",requestId:publication.request.id,snapshotHash:publication.snapshotHash,queuedAt:now});
   test("approval and availability gates do not fetch or submit externally", async () => {
     const store=new Store(":memory:");let externalCalls=0;

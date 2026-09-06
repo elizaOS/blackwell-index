@@ -37,6 +37,8 @@ const descriptorPayloadSchema=z.object({format:z.literal(ARCHIVE_FORMAT),checkpo
   // Optional for compatibility with existing hosted V2 archives. The referenced
   // configuration contains a bounded signed recovery receipt, not nested archives.
   recoveryProvenanceHash:digest.optional(),
+  // Pyth operational state is non-secret, versioned, and separately hash-bound.
+  pythStateHash:digest.optional(),
 }).strict();
 const descriptorSchema=z.object({payload:descriptorPayloadSchema,signature}).strict();
 export type ArchiveDescriptor=z.infer<typeof descriptorSchema>;

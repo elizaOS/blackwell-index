@@ -8,6 +8,10 @@ The demo includes only validated, current public USD on-demand exclusive-instanc
 
 `mode: CENTRALIZED_DEMO`, `publishable: false` and `pythPublished: false` are returned on every response. No private capture, raw evidence, identity key or credential is exposed. Historical captures are not used to fill missing current prices. Source freshness uses the existing methodology age limit; the browser also expires stale responses.
 
-The query reads only the latest capture timestamp, including its split rows, with a 64-row bound. Oversized cycles fail with 503 instead of showing a partial aggregate. Demo availability is separate from the oracle readiness endpoint.
+The shared reader examines at most 65 capture metadata rows in descending primary-key order and selects the newest contiguous cycle, including its split rows. Capture writes are atomic; an older, noncontiguous cycle that reuses the same timestamp is not merged into the current cycle. This avoids a scan of retained history and requires no storage-schema migration.
+
+A cycle may contain at most 64 rows, 8 MiB of JSON and 10,000 observations. Byte lengths are checked before payloads are loaded. An oversized or corrupt latest cycle returns a sanitized 503 instead of a partial aggregate or historical fallback. Demo availability remains separate from the oracle readiness endpoint.
+
+Both hosted and self-hosted nodes serve `/v1/demo`. Self-hosted nodes use their own configured source permissions; they do not inherit this project's hosted-demo approval. Collection-only local data therefore stays private and returns unavailable prices until the operator has applicable collection, derivation and redistribution rights.
 
 The site mode is controlled by `DEMO_MODE` in `public/assets/config.js`. The resolver defaults to real when the flag is absent or false. This deployment explicitly sets `DEMO_MODE: true`. URL query parameters cannot change the mode, and there is no visitor-facing switch. The API link follows the configured mode. Real reads `/v1/feeds` and requires a publishable, non-demo snapshot; unavailable real feeds never fall back to centralized prices. This flag does not enable Pyth publishing.

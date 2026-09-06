@@ -12,7 +12,8 @@ import { parseConfig, type NodeConfig } from "./config";
 import { canonical, generateIdentity, hash, verifyBatch } from "./crypto";
 import { calculate } from "./engine";
 import { JOURNAL_LIMITS, validateEquivocationProof, type SqlDriver } from "./journal";
-import { verifyRecoveryProvenance } from "./local-backup-metadata";
+import { parseRecoveryProvenance, RECOVERY_PROVENANCE_LIMITS, verifyRecoveryProvenance, type RecoveryProvenanceRecord } from "./local-backup-metadata";
+import { restoreArchivedPythState, verifyPythStateContinuity } from "./pyth/recovery-state";
 import { RECOVERY_MARKER } from "./recovery";
 import { readStreamContainer, writeStreamContainer, type StreamContainerOptions, type StreamContainerSummary } from "./stream-container";
 import type { SignedBatch } from "./types";
@@ -166,9 +167,20 @@ export async function verifyStreamDatabase(journal:ChunkedJournal,descriptor:Arc
     previousHash=row.hash;reproducedSnapshots++;await tick();
   }
   options.signal?.throwIfAborted();
+  const recoveryProvenance=verifyRecoveryProvenance(journal,descriptor);
+  let currentDescriptor:ArchiveDescriptor|undefined=descriptor,pythRecovery:ReturnType<typeof verifyPythStateContinuity>|undefined,depth=0;
+  // A malformed intermediate recovery cannot erase an older signed floor.
+  // Verify every linked edge at its own historical clock, not only the tip.
+  while(currentDescriptor) {
+    if(++depth>RECOVERY_PROVENANCE_LIMITS.chainDepth+1)fail("PYTH_RECOVERY_CHAIN_CAPACITY");
+    const prior:RecoveryProvenanceRecord|undefined=currentDescriptor.payload.recoveryProvenanceHash===undefined?undefined:parseRecoveryProvenance(journal.configuration(currentDescriptor.payload.recoveryProvenanceHash));
+    const checked=verifyPythStateContinuity(journal,currentDescriptor.payload.pythStateHash,prior?.descriptor.payload.pythStateHash,currentDescriptor.payload.createdAt);
+    pythRecovery??=checked;currentDescriptor=prior?.descriptor;await tick();
+  }
+  if(!pythRecovery)fail("PYTH_RECOVERY_CHAIN_MISSING");
   return {history:{valid:true as const,count:reproducedSnapshots},counts:journal.counts(),coverage:journal.captureCounts(),reproducedSnapshots,
     evidenceBytes,observations:observationCount,quarantineProofs:{verified:verifiedProofs,unavailable,requiresReview:unavailable>0},
-    recoveryProvenance:verifyRecoveryProvenance(journal,descriptor),registry,methodology};
+    recoveryProvenance,pythRecovery,registry,methodology};
 }
 
 async function stage(inputPath:string,keyPath:string,options:StreamRecoveryOptions) {
@@ -228,6 +240,7 @@ async function stage(inputPath:string,keyPath:string,options:StreamRecoveryOptio
     // These local indexes are operational metadata, never archive-supplied SQL.
     database.exec("CREATE INDEX IF NOT EXISTS stream_capture_time ON captures(collected_at); CREATE INDEX IF NOT EXISTS stream_cycle_time ON collection_captures(collected_at)");
     const verified=await verifyStreamDatabase(journal,descriptor,options);
+    restoreArchivedPythState(journal,descriptor.payload.pythStateHash,descriptor.payload.createdAt);
     database.exec("CREATE TABLE local_journal_storage (id INTEGER PRIMARY KEY CHECK(id=1),version TEXT NOT NULL); CREATE TABLE archive_recovery_provenance (id INTEGER PRIMARY KEY CHECK(id=1),descriptor TEXT NOT NULL,seal TEXT NOT NULL,archive_sha256 TEXT NOT NULL,archive_bytes INTEGER NOT NULL)");
     database.query("INSERT INTO local_journal_storage(id,version) VALUES(1,?)").run(CHUNKED_JOURNAL_VERSION);
     database.query("INSERT INTO archive_recovery_provenance(id,descriptor,seal,archive_sha256,archive_bytes) VALUES(1,?,?,?,?)").run(canonical(descriptor),canonical(seal),summary.sha256,summary.archiveBytes);
@@ -320,6 +333,7 @@ export async function restoreStreamNode(inputPath:string,keyPath:string,destinat
         "Never resume the previous signing identity from this historical counter; explicitly reconcile or revoke the previous signer.",
         "Run and independently inspect a local backup-stream archive, then establish offsite custody and restore tests before production activation. Legacy V1 backup does not support chunked journals.",
         "Review source rights, independent-operator admission, credentials, peers and Pyth setup. Collectors, peers and Pyth remain disabled.",
+        "Pyth submission high-water marks and queue receipts are retained; process locks are cleared. Stop or revoke the previous Pyth signer and reconcile newer attempts after this backup before enabling any publisher. Queue receipts are not upstream or onchain proof.",
         "Remove this marker only after documented operator review."]});
     copyFileSync(data.path,join(destination,configuration.databasePath),constants.COPYFILE_EXCL);chmodSync(join(destination,configuration.databasePath),0o600);
     const databaseFd=openSync(join(destination,configuration.databasePath),"r");try{fsyncSync(databaseFd);}finally{closeSync(databaseFd);}

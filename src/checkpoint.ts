@@ -10,7 +10,7 @@ import type { Methodology, NodeIdentity, Registry } from "./types";
 import { parseMethodology, parseRegistry } from "./validation";
 
 export interface CheckpointSource {nodeName:"primary"|"secondary"|"local";operatorGroup:string;release:string}
-export interface CheckpointMetadata extends CheckpointSource {network:string;intervalMs:number;registry:Registry;methodology:Methodology;recoveryProvenanceHash?:string}
+export interface CheckpointMetadata extends CheckpointSource {network:string;intervalMs:number;registry:Registry;methodology:Methodology;recoveryProvenanceHash?:string;pythStateHash?:string}
 const INITIAL_CURSOR:ArchiveCursor={table:0,position:0,offset:0};
 const MAX_FROZEN_BYTES=18*1024*1024;
 export const CHECKPOINT_STAGING_LIMITS=Object.freeze({frozenBytes:MAX_FROZEN_BYTES,blockCount:65536,metadataBytes:32*1024*1024});
@@ -117,7 +117,7 @@ export function beginCheckpoint(journal:Journal,identity:NodeIdentity,metadata:C
     const registry=parseRegistry(metadata.registry),methodology=parseMethodology(metadata.methodology);
     if(registry.network!==metadata.network)throw new Error("ARCHIVE_NETWORK_MISMATCH");
     const registryHash=hash(registry),methodologyHash=hash(methodology),cutoff=count(journal,"SELECT COALESCE(MAX(sequence),0) AS count FROM archive_entries");
-    for(const digest of [registryHash,methodologyHash,...(metadata.recoveryProvenanceHash===undefined?[]:[metadata.recoveryProvenanceHash])])if(!journal.configuration(digest)||!journal.db.query("SELECT sequence FROM archive_entries WHERE table_code=8 AND key_text=? AND key_integer=0 AND sequence<=?").get(digest,cutoff))throw new Error("ARCHIVE_CONFIGURATION_MISSING");
+    for(const digest of [registryHash,methodologyHash,...[metadata.recoveryProvenanceHash,metadata.pythStateHash].filter((value):value is string=>value!==undefined)])if(!journal.configuration(digest)||!journal.db.query("SELECT sequence FROM archive_entries WHERE table_code=8 AND key_text=? AND key_integer=0 AND sequence<=?").get(digest,cutoff))throw new Error("ARCHIVE_CONFIGURATION_MISSING");
     const id=randomUUID();
     for(const table of ARCHIVE_TABLES.filter(table=>table.mutable))journal.db.query(`INSERT INTO ${frozenNames[table.code]}(checkpoint_id,${table.columns.join(",")}) SELECT ?,${table.columns.join(",")} FROM ${table.name} ORDER BY ${table.order}`).run(id);
     const counts=ARCHIVE_TABLES.map(table=>table.mutable?count(journal,`SELECT COUNT(*) AS count FROM ${frozenNames[table.code]} WHERE checkpoint_id=?`,id):count(journal,"SELECT COUNT(*) AS count FROM archive_entries WHERE table_code=? AND sequence<=?",table.code,cutoff));
@@ -125,7 +125,8 @@ export function beginCheckpoint(journal:Journal,identity:NodeIdentity,metadata:C
     const descriptor=signArchiveDescriptor({format:ARCHIVE_FORMAT,checkpointId:id,createdAt:now,expiresAt:now+ttl,
       source:{nodeId:identity.nodeId,publicKey:identity.publicKey,nodeName:metadata.nodeName,operatorGroup:metadata.operatorGroup,release:metadata.release},
       configuration:{network:metadata.network,intervalMs:metadata.intervalMs,registryHash,methodologyHash},cutoff,counts,snapshotHead,
-      ...(metadata.recoveryProvenanceHash===undefined?{}:{recoveryProvenanceHash:metadata.recoveryProvenanceHash})},identity);
+      ...(metadata.recoveryProvenanceHash===undefined?{}:{recoveryProvenanceHash:metadata.recoveryProvenanceHash}),
+      ...(metadata.pythStateHash===undefined?{}:{pythStateHash:metadata.pythStateHash})},identity);
     journal.db.query("INSERT INTO archive_checkpoints(id,expires_at,descriptor,cursor,next_block,last_hash,total_bytes,counts,state,seal,metadata_bytes) VALUES(?,?,?,?,0,NULL,0,?,'ACTIVE',NULL,0)").run(id,now+ttl,canonical(descriptor),canonical(INITIAL_CURSOR),canonical(counts.map(()=>0)));
     return descriptor;
   })();
