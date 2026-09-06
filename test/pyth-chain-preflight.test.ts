@@ -1,12 +1,26 @@
 // Synthetic RPC/ABI fixtures only. No chain requests, signers or transactions.
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
-import { preflightPythBase, PYTH_BASE_VERIFIER, PYTH_PREFLIGHT_LIMITS, PYTH_PREFLIGHT_NETWORKS, PYTH_PREFLIGHT_SELECTORS, runPythChainPreflightCli,
+import { preflightPythBase, pythReadOnlyRpc, PYTH_BASE_VERIFIER, PYTH_PREFLIGHT_LIMITS, PYTH_PREFLIGHT_NETWORKS, PYTH_PREFLIGHT_SELECTORS, runPythChainPreflightCli,
   type PythChainPreflightDependencies } from "../src/pyth/chain-preflight";
 
 const NOW=1788700000000,HASH="0x"+"a".repeat(64),PRIVATE="isolated-private-error-must-not-appear";
 const header=()=>({number:"0x1234",hash:HASH,timestamp:"0x"+Math.floor(NOW/1000).toString(16)});
 const word=(value:bigint)=>value.toString(16).padStart(64,"0");
+
+test("shared read-only transport rejects writes, custom endpoints and state overrides before fetch",async()=>{
+  let requests=0;
+  const request=(async()=>{requests++;throw Error("must not fetch");}) as unknown as typeof fetch;
+  const invoke=(url:string,method:string,params:unknown[],id=1,timeout=100)=>pythReadOnlyRpc(url,id,method,params,request,new AbortController().signal,timeout);
+  for(const method of ["eth_sendTransaction","eth_sendRawTransaction","personal_sign","eth_sign","wallet_addEthereumChain"]) {
+    await expect(invoke(PYTH_PREFLIGHT_NETWORKS.base.rpc,method,[])).rejects.toThrow("RPC_METHOD_NOT_READ_ONLY");
+  }
+  await expect(invoke("https://example.invalid","eth_chainId",[])).rejects.toThrow("RPC_ENDPOINT_NOT_REVIEWED");
+  await expect(invoke(PYTH_PREFLIGHT_NETWORKS.base.rpc,"eth_call",[{},"latest",{}])).rejects.toThrow("RPC_PARAMS_INVALID");
+  await expect(invoke(PYTH_PREFLIGHT_NETWORKS.base.rpc,"eth_chainId",[],0)).rejects.toThrow("RPC_ID_INVALID");
+  await expect(invoke(PYTH_PREFLIGHT_NETWORKS.base.rpc,"eth_chainId",[],1,6000)).rejects.toThrow("TIMEOUT_INVALID");
+  expect(requests).toBe(0);
+});
 function version(text="0.1.1"):string {const bytes=Buffer.from(text);return "0x"+word(32n)+word(BigInt(bytes.length))+bytes.toString("hex").padEnd(64,"0");}
 function fixture(network:"base-sepolia"|"base"="base") {
   const requests:Array<{url:string;body:{id:number;method:string;params:unknown[]};init:RequestInit}>=[];

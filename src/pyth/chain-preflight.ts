@@ -70,6 +70,12 @@ function block(value:unknown,clock:number):Block {
 }
 /** Shared bounded transport for reviewed read-only chain adapters. Not a public API route. */
 export async function pythReadOnlyRpc(url:string,id:number,method:string,params:unknown[],request:typeof fetch,signal:AbortSignal,timeout:number):Promise<unknown> {
+  if(!Object.values(PYTH_PREFLIGHT_NETWORKS).some(network=>network.rpc===url))fail("RPC_ENDPOINT_NOT_REVIEWED");
+  if(!["eth_chainId","eth_getBlockByNumber","eth_getCode","eth_getBalance","eth_call"].includes(method))fail("RPC_METHOD_NOT_READ_ONLY");
+  if(!Number.isSafeInteger(id)||id<1)fail("RPC_ID_INVALID");
+  if(!Number.isSafeInteger(timeout)||timeout<1||timeout>PYTH_PREFLIGHT_LIMITS.requestTimeoutMs)fail("TIMEOUT_INVALID");
+  // Never accept a third eth_call parameter: that would enable state overrides.
+  if(!Array.isArray(params)||(method==="eth_call"&&params.length!==2))fail("RPC_PARAMS_INVALID");
   const controller=new AbortController();let reader:ReadableStreamDefaultReader<Uint8Array>|undefined,response:Response|undefined;
   let rejectAbort:(error:PreflightFailure)=>void=()=>{};
   const aborted=new Promise<never>((_,reject)=>{rejectAbort=reject;});void aborted.catch(()=>{});
