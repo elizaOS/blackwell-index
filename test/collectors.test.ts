@@ -136,13 +136,17 @@ describe("authenticated pricing collectors", () => {
 });
 
 describe("AWS official SDK transport", () => {
+  function pricingRequest(init?: RequestInit) {
+    const body = typeof init?.body === "string" ? init.body : new TextDecoder().decode(init?.body as Uint8Array);
+    return JSON.parse(body) as { Filters: { Field: string; Value: string }[]; NextToken?: string };
+  }
   function awsContext(gpuCount = "8") {
     return context((_url, init) => {
       const headers = new Headers(init?.headers);
       expect(headers.get("authorization")).toContain("AWS4-HMAC-SHA256");
       expect(headers.get("x-amz-security-token")).toBe("unit-test-session-token");
-      const body = JSON.parse(typeof init?.body === "string" ? init.body : new TextDecoder().decode(init?.body as Uint8Array));
-      const sku = body.Filters.find((filter: { Field: string }) => filter.Field === "instanceType").Value;
+      const body = pricingRequest(init);
+      const sku = body.Filters.find(filter => filter.Field === "instanceType")!.Value;
       if (sku !== "p6-b200.48xlarge") return json({ PriceList: [] });
       return json({ PriceList: [JSON.stringify({ product: { sku: "test-product", attributes: { instanceType: sku, operatingSystem: "Linux", tenancy: "Shared", preInstalledSw: "NA", gpu: gpuCount, regionCode: "us-east-1", marketoption: "CapacityBlock" } }, terms: { OnDemand: { "test-term": { effectiveDate: "2026-01-01T00:00:00Z", priceDimensions: { "test-rate": { unit: "Hrs", beginRange: "0", endRange: "Inf", description: "Capacity Block reservation", pricePerUnit: { USD: "98.8400000000" } } } } } } })] });
     }, { AWS_ACCESS_KEY_ID: "unit-test-access-key", AWS_SECRET_ACCESS_KEY: "unit-test-secret-key", AWS_SESSION_TOKEN: "unit-test-session-token" });
@@ -152,9 +156,9 @@ describe("AWS official SDK transport", () => {
     const result = await collect("aws-pricing", ctx);
     expect(result.observations).toHaveLength(1);
     expect(result.observations[0]).toMatchObject({ model: "B200", price: "12.355000", instancePrice: "98.840000", procurement: "CAPACITY_BLOCK", availability: "UNKNOWN" });
-    expect(result.errors).toHaveLength(3);
+    expect(result.errors).toHaveLength(4);
     expect(result.errors.every(error => error.startsWith("NO_DATA"))).toBe(true);
-    expect(evidence).toHaveLength(4);
+    expect(evidence).toHaveLength(5);
     expect(JSON.stringify(result)).not.toContain("unit-test-secret");
     expect(JSON.stringify(evidence.map(x => ({ url: x.url, body: new TextDecoder().decode(x.body) })))).not.toContain("unit-test-session-token");
   });
@@ -163,6 +167,43 @@ describe("AWS official SDK transport", () => {
     const result = await collect("aws-pricing", ctx);
     expect(result.observations).toEqual([]);
     expect(result.errors[0]).toContain("HARDWARE_MISMATCH");
+  });
+  test("archives every GB300 discovery page without inventing its physical GPU denominator", async () => {
+    const { ctx, evidence, requests } = context((_url, init) => {
+      const request = pricingRequest(init), sku = request.Filters.find(filter => filter.Field === "instanceType")!.Value;
+      if (!sku.startsWith("p6e-gb300.")) return json({ PriceList: [] });
+      return json({ PriceList: [JSON.stringify({ product: { sku: `test-gb300-${request.NextToken ?? "first"}`, attributes: {
+        instanceType: sku, operatingSystem: "Linux", tenancy: "Shared", preInstalledSw: "NA", gpu: request.NextToken ? "72" : "4",
+      } } })], ...(request.NextToken ? {} : { NextToken: "second-page" }) });
+    }, { AWS_ACCESS_KEY_ID: "unit-test-access-key", AWS_SECRET_ACCESS_KEY: "unit-test-secret-key" });
+    const result = await collect("aws-pricing", ctx);
+    expect(result.observations).toEqual([]);
+    expect(result.errors.filter(error => error.startsWith("HARDWARE_METADATA_REQUIRED"))).toHaveLength(2);
+    expect(evidence).toHaveLength(7); expect(requests).toHaveLength(7);
+    expect(evidence.every(record => record.hash === createHash("sha256").update(record.body).digest("hex"))).toBe(true);
+  });
+  test("GB300 discovery stops on a throttled later page without claiming complete discovery", async () => {
+    const { ctx, evidence, requests } = context((_url, init) => {
+      const request = pricingRequest(init), sku = request.Filters.find(filter => filter.Field === "instanceType")!.Value;
+      if (!sku.startsWith("p6e-gb300.")) return json({ PriceList: [] });
+      if (request.NextToken) return new Response("private provider error details", { status: 429, headers: { "retry-after": "60" } });
+      return json({ PriceList: [JSON.stringify({ product: { sku: "test-gb300-product", attributes: { instanceType: sku,
+        operatingSystem: "Linux", tenancy: "Shared", preInstalledSw: "NA", gpu: "4" } } })], NextToken: "second-page" });
+    }, { AWS_ACCESS_KEY_ID: "unit-test-access-key", AWS_SECRET_ACCESS_KEY: "unit-test-secret-key" });
+    const result = await collect("aws-pricing", ctx);
+    expect(result.observations).toEqual([]); expect(result.errors.at(-1)).toContain("RATE_LIMITED");
+    expect(result.errors.some(error => error.startsWith("HARDWARE_METADATA_REQUIRED"))).toBe(false);
+    expect(requests).toHaveLength(5); expect(evidence).toHaveLength(4);
+    expect(JSON.stringify(result)).not.toContain("private provider error details");
+  });
+  test("SDK transport failures never expose credential-bearing exception messages", async () => {
+    const { ctx, evidence } = context(() => { throw new Error("unit-test-secret-key unit-test-session-token"); }, {
+      AWS_ACCESS_KEY_ID: "unit-test-access-key", AWS_SECRET_ACCESS_KEY: "unit-test-secret-key", AWS_SESSION_TOKEN: "unit-test-session-token",
+    });
+    const result = await collect("aws-pricing", ctx);
+    expect(result.observations).toEqual([]); expect(evidence).toEqual([]);
+    expect(result.errors.length).toBeGreaterThan(0);
+    expect(result.errors.every(error => error === "COLLECTION_FAILED: aws-pricing")).toBe(true);
   });
 });
 
@@ -222,7 +263,7 @@ test("model recognition never classifies GB systems as standalone B chips", () =
 test("collector selection rejects unknown ids and duplicates do not increase source influence", () => {
   expect(createCollectors(["oracle-public", "oracle-public"])).toHaveLength(1);
   expect(() => createCollectors(["unknown"])).toThrow("Unknown collector");
-  expect(collectorCatalog.filter(x => x.defaultEnabled).map(x => x.id)).toEqual(["oracle-public", "azure-retail"]);
+  expect(collectorCatalog.filter(x => x.defaultEnabled).map(x => x.id)).toEqual(["oracle-public", "azure-retail", "verda-public"]);
 });
 test("invalid JSON is archived but never converted into an observation", async () => {
   const { ctx, evidence } = context(() => new Response("invalid", { headers: { "content-type": "text/plain" } }));

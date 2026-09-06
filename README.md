@@ -17,7 +17,7 @@ bun run collect
 bun start
 ```
 
-Open `http://127.0.0.1:3410`. Setup generates a random Ed25519 collector key, private local configuration and a persistent SQLite journal. Oracle and Azure public catalog collectors are enabled for local research. Source publication permissions, provider weights and trusted operator identities start unconfigured. That means real local collection can succeed while public prices remain unavailable.
+Open `http://127.0.0.1:3410`. Setup generates a random Ed25519 collector key, private local configuration and a persistent SQLite journal. Oracle, Azure and Verda public catalog collectors are enabled for local research. Source publication permissions, provider weights and trusted operator identities start unconfigured. That means real local collection can succeed while public prices remain unavailable.
 
 List collectors with `bun src/cli.ts providers`. Enable selected collectors at setup:
 
@@ -101,9 +101,11 @@ docker compose up -d
 
 The published port binds to localhost; use an HTTPS reverse proxy for public peer access. Repeat setup only for a new volume. Collector identities and replay state must survive container upgrades. See [Cloudflare deployment](docs/CLOUDFLARE.md) for managed durable nodes and domain routing.
 
+Self-hosted nodes support encrypted journal backups and verified restoration into a new, disabled identity. Restore never resumes an old signer or copies provider credentials. Read the [recovery procedure and limits](docs/RECOVERY.md) before using it; this procedure does not export hosted Durable Objects.
+
 The [launch checklist](docs/LAUNCH_TODO.md) names the required accounts, source permissions, Pyth onboarding, external verification and operating evidence. [Domain status](docs/DOMAIN_STATUS.md) records the four requested registrations. Private keys, raw account data and private business documents are not included in this repository.
 
-Live development sites: [Blackwell Index](https://blackwellindex.com) and [ALTX](https://altx.exchange). See the [release evidence](docs/RELEASE_2026-09-06.md) and [operating costs](docs/OPERATING_COSTS.md). The deployed nodes collect real data but do not publish prices while the launch requirements remain unmet.
+Live development sites: [Blackwell Index](https://blackwellindex.com) and [ALTX](https://altx.exchange). See the [initial release evidence](docs/RELEASE_2026-09-06.md), [provider and recovery expansion](docs/EXPANSION_2026-09-06.md) and [operating costs](docs/OPERATING_COSTS.md). The deployed nodes collect real data but do not publish prices while the launch requirements remain unmet.
 
 After deployment, verify the committed source, both nodes and the explicitly unavailable public feeds:
 

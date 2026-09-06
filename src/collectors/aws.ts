@@ -9,8 +9,9 @@ export const AWS_INSTANCES: ReadonlyArray<{ sku: string; model: GpuModel; gpuCou
   { sku: "p6-b200.48xlarge", model: "B200", gpuCount: 8 },
   { sku: "p6-b300.48xlarge", model: "B300", gpuCount: 8 },
   { sku: "p6e-gb200.36xlarge", model: "GB200", gpuCount: 4 },
-  { sku: "p6e-gb300.36xlarge", model: "GB300", gpuCount: 4 },
 ];
+/** Officially named instances, but their exact physical GPU denominator is not yet verified. */
+export const AWS_DISCOVERY_INSTANCES = ["p6e-gb300.36xlarge", "p6e-gb300.72xlarge"] as const;
 
 export const aws: Collector = {
   id: "aws-pricing", provider: "aws",
@@ -34,15 +35,17 @@ export const aws: Collector = {
       },
     });
     try {
-      for (const mapping of AWS_INSTANCES) {
+      const mappings = [...AWS_INSTANCES, ...AWS_DISCOVERY_INSTANCES.map(sku => ({ sku, model: "GB300" as const, gpuCount: null }))];
+      for (const mapping of mappings) {
         try {
           let token: string | undefined;
+          let discoveryMatch = false;
           const visited = new Set<string>();
           const observations = [];
           do {
             if (visited.has(token ?? "") || visited.size >= 100) throw new CollectionError("INVALID_PAGINATION", `AWS ${mapping.sku} pages repeated or exceed 100`);
             visited.add(token ?? ""); lastResponse = undefined;
-            const response = await client.send(new GetProductsCommand({ ServiceCode: "AmazonEC2", FormatVersion: "aws_v1", MaxResults: 100, ...(token ? { NextToken: token } : {}), Filters: [
+            await client.send(new GetProductsCommand({ ServiceCode: "AmazonEC2", FormatVersion: "aws_v1", MaxResults: 100, ...(token ? { NextToken: token } : {}), Filters: [
               { Type: "TERM_MATCH", Field: "instanceType", Value: mapping.sku },
               { Type: "TERM_MATCH", Field: "operatingSystem", Value: "Linux" },
               { Type: "TERM_MATCH", Field: "tenancy", Value: "Shared" },
@@ -55,6 +58,11 @@ export const aws: Collector = {
               const item = object(JSON.parse(string(serialized, "PriceList item")));
               const product = object(item.product); const attrs = object(product.attributes);
               if (attrs.instanceType !== mapping.sku || attrs.operatingSystem !== "Linux" || attrs.tenancy !== "Shared" || attrs.preInstalledSw !== "NA") continue;
+              if (mapping.gpuCount === null) {
+                // Retain every discovery page without interpreting the product's GPU attribute as reviewed hardware metadata.
+                discoveryMatch = true;
+                continue;
+              }
               if (attrs.gpu !== undefined && String(attrs.gpu) !== String(mapping.gpuCount)) throw new CollectionError("HARDWARE_MISMATCH", `AWS ${mapping.sku} GPU count changed`);
               const terms = object(item.terms);
               for (const [termKind, rawTerms] of Object.entries(terms)) {
@@ -81,10 +89,12 @@ export const aws: Collector = {
                 }
               }
             }
-            token = response.NextToken;
+            const nextToken = object(evidence.data).NextToken;
+            token = nextToken === undefined || nextToken === null || nextToken === "" ? undefined : string(nextToken, "AWS NextToken");
           } while (token);
           result.observations.push(...observations);
-          if (!observations.length) result.errors.push(`NO_DATA: aws-pricing has no supported current public hourly price for ${mapping.sku}`);
+          if (discoveryMatch) result.errors.push(`HARDWARE_METADATA_REQUIRED: AWS ${mapping.sku} requires reviewed DescribeInstanceTypes GPU counts and commercial terms before normalization`);
+          else if (!observations.length) result.errors.push(`NO_DATA: aws-pricing has no supported current public hourly price for ${mapping.sku}`);
         } catch (error) {
           result.errors.push(failure(error, this.id));
           if (error instanceof CollectionError && ["RATE_LIMITED", "HTTP_ERROR"].includes(error.code)) break;

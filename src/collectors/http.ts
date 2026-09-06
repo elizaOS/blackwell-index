@@ -20,7 +20,10 @@ export async function jsonRequest(context: CollectorContext, source: string, url
     headers,
   });
   if (!response.ok) {
-    const retry = response.headers.get("retry-after");
+    // Scheduling consumes the original header separately. Do not reflect arbitrary
+    // upstream header text into local diagnostics or archived error strings.
+    const rawRetry = response.headers.get("retry-after");
+    const retry = rawRetry && /^\d{1,10}$/.test(rawRetry) ? rawRetry : null;
     await response.body?.cancel();
     throw new CollectionError(response.status === 429 ? "RATE_LIMITED" : "HTTP_ERROR", `${source} HTTP ${response.status}${retry ? `; Retry-After=${retry}` : ""}`);
   }

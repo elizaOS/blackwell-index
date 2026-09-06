@@ -6,6 +6,8 @@ The automated suite uses clearly isolated synthetic test cases to verify calcula
 
 Tests include exact instance normalization, all model families, wrong model/term/unit rejection, schema changes, missing keys, paginated APIs, redirects, malformed responses, throttling, outliers, stale/future timestamps, duplicate identities, replay after restart, conflicting reports, source-rights expiry, HTTP peer convergence, snapshot chain corruption, UI data clearing and Pyth protocol conformance.
 
+Recovery tests additionally exercise committed WAL capture, wrong encryption keys, corrupted authentication tags, missing historical inputs/configurations, rehashed incorrect calculations, report routing, conflict-proof linkage and signing-counter rollback. CLI and container lifecycle checks verify that restored identities differ and cannot collect or serve before review. Rate-control tests cover persisted 429/503 deadlines, clock rollback, concurrent requests and late responses; hosted orchestration tests verify that a throttled source is not requested again during its wait.
+
 The Pyth conformance test runs official `pyth-lazer-agent` 0.16.0 against a local test receiver and independently verifies the signed protobuf transaction. It proves compatibility with that version's local publisher protocol. It does not prove feed admission or production forwarding.
 
 ## Real-data experiments

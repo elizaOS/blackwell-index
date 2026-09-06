@@ -6,12 +6,14 @@ This checklist is the completion contract for the public oracle. Software tests,
 | --- | --- | --- |
 | Four domains | Purchased for $78.06; DNS, HTTPS, both sites and canonical redirects verified | Assign renewal owner; automatic renewal is off |
 | Public open source repository | Public elizaOS/blackwell-index; Linux, container and Pyth protocol checks passed for the deployed follow-up release | Continue exact-revision verification on every change |
-| Real source collection | Public Oracle all-four and Azure GB200 retrievals verified | Continue scheduled collection; inspect coverage and source errors |
-| AWS credentials | Not supplied | Read-only Pricing IAM principal, access key/secret or equivalent approved runtime identity; optional session token |
+| Real source collection | Public Oracle all-four, Azure GB200 and Verda B200/B300/GB300 retrievals verified | Continue scheduled collection; inspect coverage, source errors and sustained availability |
+| AWS credentials | Not supplied | Read-only `pricing:GetProducts` principal and keys; optional session token. Also obtain `ec2:DescribeInstanceTypes` access to verify GB300 hardware before enabling normalization |
 | Google credentials and SKU map | Not supplied | Enable Cloud Billing Catalog API; API key/project; capture complete Blackwell component SKUs and reviewed instance mapping |
 | Lambda account | Not supplied | Organization account, read-only cloud API key, source publication rights |
 | Runpod account | Not supplied | Organization API key and written automated collection/derived-publication terms |
 | Vast account | Not supplied | Read-only marketplace key, approved retrieval/publication terms, host/provenance criteria |
+| Hyperstack account | Collector implemented; no live key supplied | Read-only pricebook/flavor/stock key, live joins and billing reconciliation, source rights |
+| Shadeform account | Collector implemented; currency and live access unverified | Key, written USD billing confirmation, permission for automated compilation and publication, underlying-provider ownership mapping |
 | Remaining providers | Coverage/discovery matrix recorded | Provider price APIs or documented contributor feeds for each supported hardware family |
 | Source rights | Production derive/redistribution flags unset | Evidence covering automated retrieval, raw retention, public per-provider data, derived benchmark and onchain financial-reference use; identify which operator is covered |
 | Provider weights | Unset | Select eligible comparable sources, verify economic groups, approve fixed constituent sets per model and effective date |
@@ -21,11 +23,20 @@ This checklist is the completion contract for the public oracle. Software tests,
 | Pyth signer | Integration tested against official agent locally | Separate protected production key, relayer access, funded infrastructure if required by agreed terms |
 | Pyth consumer access | Not supplied | Hermes/Pro API account and appropriate public redistribution terms |
 | Onchain verification | Not performed | Select supported target chain, official upgraded contract, RPC and gas wallet; submit and inspect actual signed update |
-| Production operations | Two hosted nodes collecting real Oracle/Azure data; scheduled recurrence and identity/history persistence across redeployment verified | Monitors, paging owner, backups, restore, key rotation, outages and peer-failure exercises |
+| Production operations | Hosted recurrence and identity/history persistence verified; self-hosted encrypted recovery implemented separately | Monitors, paging owner, authenticated hosted export, offsite encrypted storage, key escrow, hosted restore, rotation and outage exercises |
 | Historical validation | Real collection begins now | Accumulate genuine coverage; obtain licensed historical records; no synthetic backfill or future membership look-ahead |
 | External audit and benchmark review | Internal independent code review and tests | Security assessment, methodology validation, legal/data-rights review and signed release decision |
 
 Do not paste API keys or private keys into issues or chat. Use `credentials`, environment variables, organization secret storage and deployment secret commands. Pyth admission details and provider agreements should be referenced by protected evidence records; private contracts do not belong in the public repository.
+
+## Immediate operator handoff
+
+1. Name the legal benchmark operator, Pyth contact and authorized source-rights reviewer. Provide protected references to existing agreements, if any.
+2. Identify the organization secret manager or sign in to the relevant provider dashboards. The current Worker has no provider secrets configured. Start with AWS, Google and the providers where an account already exists; a new paid subscription is not automatically required or authorized.
+3. Confirm who will run independently administered nodes. Two nodes under this account are one operator, not two votes.
+4. Choose the offsite backup destination, key custodian and paging owner. Self-hosted recovery now has tooling; hosted export and a real disaster-recovery exercise remain separate work.
+
+Continue research collection while these are unresolved. Do not enable public prices, Pyth submission or a financial-reference claim merely to make the dashboard look complete.
 
 ## Pyth onboarding packet to prepare
 

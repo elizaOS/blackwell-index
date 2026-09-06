@@ -2,7 +2,7 @@
 
 Research and diagnostic observation date: **September 6, 2026**. An implemented connector, an approved contributor, and a currently available price are separate states. `config/catalog.json` is a discovery inventory; the network registry controls accepted sources and rights. An empty model list means coverage has not been verified, rather than a claim that a provider has no Blackwell hardware.
 
-The repository currently implements seven collectors. It does not yet cover every provider. Additional official APIs and commercial feeds are listed below with their outstanding work. Test fixtures exercise parsing and failures; no fixture is used as a live data source.
+The repository implements ten collectors, including three public catalog sources. It does not yet cover every provider. Additional official APIs and commercial feeds are listed below with their outstanding work. Test fixtures exercise parsing and failures; no fixture is used as a live data source.
 
 ## Implemented collectors
 
@@ -10,15 +10,18 @@ The repository currently implements seven collectors. It does not yet cover ever
 |---|---|---|---|---|
 | `oracle-public` | None | B200, B300, GB200 and GB300 public pay-as-you-go list rates | Unknown | All four API responses HTTP 200 on September 6 |
 | `azure-retail` | None | Exact supported GB200/GB300 Linux consumption SKUs; regular and Spot stay separate | Unknown | GB200 returned prices; separate GB300 query returned zero rows |
+| `verda-public` | None | B200, B300 and GB300 USD instance list rates; on-demand and Spot stay separate | Unknown | Public catalog returned 22 observations across 11 supported configurations on September 6 |
 | `lambda-cloud` | `LAMBDA_API_KEY` | Public instance catalog rate | Regional available/unavailable; no quantity supplied | Implemented against official schema; operator key required for live validation |
 | `runpod-secure` | `RUNPOD_API_KEY` | Lowest advertised Secure Cloud rate for the one-GPU query | Qualitative stock plus supported deployment sizes | Implemented against official schema; operator key and permission required for live validation |
 | `vast-offers` | `VAST_API_KEY` | Verified currently rentable noninterruptible offers | Offer GPU count | Implemented against official schema; operator key and written data permission required for live validation |
 | `google-billing` | `GOOGLE_CLOUD_BILLING_API_KEY` | Catalog discovery; complete instance composition after explicit SKU mapping | Unknown | Key and reviewed billing-component mapping required for live validation |
 | `aws-pricing` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`; `AWS_SESSION_TOKEN` for temporary credentials | Supported Linux P6 instance catalog prices; Capacity Block metadata retained | Unknown | Implemented with the official AWS SDK; live account credentials required |
+| `hyperstack-pricebook` | `HYPERSTACK_API_KEY` | Documented eight-GPU B200/B300 configurations; undiscounted open-ended list rates | Qualitative configuration stock | Implemented against official schemas; no live authenticated verification |
+| `shadeform-instances` | `SHADEFORM_API_KEY` plus reviewed billing currency and evidence | B200/B300 account-specific reseller quotes, excluded from the public-list cohort | Regional available/unavailable | No live key or written currency confirmation supplied |
 
 Collection never provisions, reserves, or purchases GPU capacity. API keys remain in the operator's environment. The collector returns `NO_KEY` without a request when credentials are absent. Do not paste credentials into a registry, observation, issue, or source URL. Runpod requires its key in the documented query parameter; evidence URLs remove that parameter.
 
-Successful responses are archived as exact bytes before parsing. Every observation references the response SHA-256. A malformed successful response is still available for diagnosis. HTTP failures produce explicit errors; a 429 response is not parsed as JSON. The next scheduled attempt should respect the provider's `Retry-After` interval. Collectors reject redirects, oversized responses, unsupported units and invalid decimal prices. Requests identify the client with the honest `blackwell-index/0.1` User-Agent. Oracle's API rejected Bun's default client header during diagnostics but accepted this identified API client.
+Successful responses are archived as exact bytes before parsing. Every observation references the response SHA-256 or a labeled composition receipt that references each original response. A malformed successful response is still available for diagnosis. HTTP failures produce explicit errors; a 429 response is not parsed as JSON. CLI and hosted collection persist per-collector backoff: 429/503 `Retry-After` deadlines survive restarts, and missing or invalid retry headers use bounded exponential backoff. Collectors reject redirects, oversized responses, unsupported units and invalid decimal prices. Requests identify the client with the honest `blackwell-index/0.1` User-Agent. Oracle's API rejected Bun's default client header during diagnostics but accepted this identified API client.
 
 ### Oracle
 
@@ -48,6 +51,12 @@ The GB200 diagnostic returned 80 records, including Windows and Spot entries. On
 
 The diagnostic also confirmed that a substring filter for B200 matches GB200. Only an explicit SKU map decides the model. Old `effectiveStartDate` values remain valid if a current successful retrieval still presents that tariff. No current-capacity statement is inferred from a catalog row.
 
+### Verda
+
+The [official OpenAPI schema](https://api.verda.com/v1/openapi.json) explicitly permits unauthenticated `GET /v1/instance-types`. The collector requests `currency=usd`, verifies model, physical GPU count, hardware and billing fields, and preserves `price_per_hour` and `spot_price` as separate procurement classes. September 6 retrieval produced eight B200, eight B300 and six GB300 observations. These counts reflect that catalog response, not fixed coverage or confirmed stock. No GB200 price was returned.
+
+The catalog does not establish current availability, location or complete rack-level procurement terms. Those fields remain unknown. Public access also does not establish redistribution or derivative-index rights; [Verda's terms](https://verda.com/terms-and-conditions) require review before publication. See [public source discovery](PUBLIC_SOURCE_DISCOVERY.md) for exact mappings, exclusions and remaining evidence.
+
 ### Lambda
 
 Create an API key in the Lambda Cloud dashboard and set `LAMBDA_API_KEY`. The [official API](https://docs.lambda.ai/public-cloud/cloud-api/) supports Bearer authentication on `GET https://cloud.lambda.ai/api/v1/instance-types` and documents approximately one request per second. The collector converts `instance_type.price_cents_per_hour` into dollars and divides by `instance_type.specs.gpus`. Each `regions_with_capacity_available` entry becomes a regional observation; an empty array produces an unavailable catalog observation with region `global`.
@@ -74,7 +83,7 @@ Create an IAM principal permitted to call `pricing:GetProducts` and supply `AWS_
 
 The collector queries `AmazonEC2` for exact supported P6 instance types, Linux, Shared tenancy and no preinstalled commercial software. It follows every result page and accepts flat hourly OnDemand or CapacityBlock terms. It preserves detected capacity-block classification and excludes unsupported reserved payment schedules rather than converting an upfront fee into a misleading hourly price. It uses fixed hardware maps verified against provider specifications, checks the API's GPU count when present, and rejects inconsistencies.
 
-Current mappings cover `p6-b200.48xlarge` and `p6-b300.48xlarge` at eight GPUs, and `p6e-gb200.36xlarge` and `p6e-gb300.36xlarge` at four GPUs. The [AWS EKS documentation](https://docs.aws.amazon.com/eks/latest/userguide/ml-eks-nvidia-ultraserver.html) distinguishes four-GPU nodes from their enclosing 36- or 72-GPU UltraServers. Additional 72xlarge shapes require explicit mapping validation before admission. No current price for a requested type returns `NO_DATA`. Spot market history and executable Capacity Block offerings require separate EC2 API adapters.
+Verified normalized mappings cover `p6-b200.48xlarge` and `p6-b300.48xlarge` at eight GPUs, and `p6e-gb200.36xlarge` at four GPUs. [AWS P6 specifications](https://aws.amazon.com/ec2/instance-types/p6/) distinguish a four-GPU GB200 node from the enclosing 36- or 72-GPU UltraServer. The minimum order is not inferred from node size. GB300 `.36xlarge` and `.72xlarge` names are queried for discovery only: their GPU count must be confirmed through authoritative instance metadata before any quote is normalized. A Kubernetes workload's requested GPU count is not a hardware specification. Matching GB300 products return `HARDWARE_METADATA_REQUIRED`; an absent requested type returns `NO_DATA`. Obtain `ec2:DescribeInstanceTypes` access for mapping validation. Spot history and executable Capacity Block offerings need separate EC2 API adapters.
 
 ### Google catalog setup
 
@@ -91,11 +100,11 @@ The collector requires every component's current price, region and unit to match
 | Nebius | [Marketing prices](https://nebius.com/prices), [detailed billing docs](https://docs.nebius.com/compute/resources/pricing) | Resolve conflicting B200/B300 rates and obtain an authoritative provider quote feed; GB200/GB300 are sales-led |
 | CoreWeave | [Public pricing](https://www.coreweave.com/pricing), [NVL72 constraints](https://docs.coreweave.com/platform/instances/nvl72) | Obtain current authenticated price/availability feed and contributor permission; preserve whole-rack minimums |
 | Crusoe | [Customer API capacities integration](https://docs.crusoecloud.com/reference/mcp-server), [pricing](https://www.crusoe.ai/cloud/pricing) | API key pair, customer account and authoritative Blackwell price feed; capacity alone is not a price |
-| Hyperstack | [Pricebook API](https://docs.hyperstack.cloud/docs/api-reference/get-pricebook/) | Add `GET https://infrahub-api.nexgencloud.com/v1/pricebook` with `api_key` header, join flavor/stock data and classify account discounts |
-| Shadeform | [Instance types API](https://docs.shadeform.ai/api-reference/instances/instances-types) | Add `GET https://api.shadeform.ai/v1/instances/types` with `X-API-KEY`; verify price unit; preserve underlying cloud and reseller markup |
+| Hyperstack | [Pricebook API](https://docs.hyperstack.cloud/docs/api-reference/get-pricebook/) | Three-endpoint collector implemented; obtain key, live schema verification and source rights; discounted/dated rates remain excluded |
+| Shadeform | [Instance types API](https://docs.shadeform.ai/api-reference/instances/instances-types) | Collector implemented; obtain key, written USD billing confirmation and retrieval/publication permission; verify underlying provider ownership |
 | Prime Intellect | [Availability API](https://docs.primeintellect.ai/api-reference/check-gpu-availability) | Bearer key with Availability Read; pagination, GPU count and price-unit validation; underlying provider deduplication |
 | TensorDock | [Provider documentation](https://docs.tensordock.com/) | Obtain current API schema and verify Blackwell inventory; no guessed legacy endpoint is implemented |
-| Verda | [Pricing and billing](https://docs.verda.com/welcome-to-verda/pricing-and-billing) | Confirm current price API, model catalog and rights |
+| Verda | [Pricing and billing](https://docs.verda.com/welcome-to-verda/pricing-and-billing) | Public collector live-verified; confirm publication rights, location/availability semantics and procurement minimums |
 | Gcore | [GPU price list](https://gcore.com/pricing/ai) | Public B300 EUR pricing and GB300 sales contact; approved currency conversion and contract cohort required |
 | STN | [Pricing](https://www.stninc.com/pricing) | B300/GB300 rates vary by contract length; source feed and procurement classification required |
 | Together AI | [GPU clusters](https://www.together.ai/gpu-clusters) | Confirm current price/availability API and rights; keep cluster reservation terms explicit |
@@ -104,6 +113,8 @@ The collector requires every component's current price, region and unit to match
 AWS's [Capacity Blocks page](https://aws.amazon.com/ec2/capacityblocks/pricing/) lists scheduled block rates for B200, B300 and GB200. GB300 has [sales-led general availability](https://aws.amazon.com/about-aws/whats-new/2025/12/amazon-ec2-p6e-gb300-ultraservers-nvidia-gb300-nvl72-generally-available/). These are different from ordinary immediately available on-demand compute. Google's [A4 pricing](https://cloud.google.com/products/compute/pricing/accelerator-optimized?hl=en) includes Flex-start, Calendar, Spot and commitment options while regular on-demand is shown as N/A. Its [GB200 deployment documentation](https://docs.cloud.google.com/ai-hypercomputer/docs/create/create-vm-a4x) requires reserved sub-blocks even when individual four-GPU nodes are deployed. A scalar hourly rate must retain these constraints.
 
 ## Normalization and source independence
+
+[Hyperstack and Shadeform implementation notes](ADDITIONAL_PROVIDERS.md) document credential setup, exact joins, currency requirements and unsupported cases. Existing local node configurations are not silently migrated: explicitly add new collector IDs and reviewed registry entries before enabling them.
 
 The intended unit is the rental bundle's USD cost divided by physical accelerator-hours. CPU, memory, interconnect and local storage can be bundled differently by provider; this is not a separately priced bare GPU chip. Preserve included resources, topology and minimum order. Optional egress, taxes, enterprise software and persistent storage are not silently added or subtracted.
 

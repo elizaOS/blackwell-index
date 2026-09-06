@@ -40,4 +40,10 @@ The previous compute-strategy repository at revision ba8055be4534d0c512be06789aa
 
 ## External completion dependencies
 
-Pyth accepted publisher/asset admission and ingress details; provider-specific API accounts and appropriate automated retrieval/retention/redistribution rights; independent operators and governance owners; production host access and persistent storage; registrar login/payment and DNS authority. Each will be recorded with concrete evidence and exact next action. Do not call the oracle published or decentralized in production before those conditions are verified.
+Pyth accepted publisher/asset admission and ingress details; provider-specific API accounts and appropriate automated retrieval/retention/redistribution rights; independent operators and governance owners; authenticated hosted backup, external key custody and production operating review. Domains and same-operator hosting are deployed, but renewal ownership and ongoing operations remain open. Each dependency is recorded in the [launch checklist](LAUNCH_TODO.md). Do not call the oracle published or decentralized in production before those conditions are verified.
+
+## Current implementation scope
+
+Ten collectors are implemented; Oracle, Azure and Verda have real public retrieval evidence. The authenticated collectors remain unverified against live accounts. AWS GB300 is discovery-only until its physical GPU denominator is confirmed. This is a coverage expansion, not a claim to cover every provider or approve any source for publication.
+
+Durable 429/503 scheduling is shared by CLI and hosted collection. Self-hosted encrypted recovery verifies retained history and starts only as a new, disabled identity. Hosted export, offsite custody, sustained independent operation and Pyth readback remain separate acceptance gates.

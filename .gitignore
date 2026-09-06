@@ -8,6 +8,8 @@ dist/
 .dev.vars.*
 data/
 artifacts/
+backups/
+*.sbx-backup
 *.pem
 *.key
 *keypair*.json

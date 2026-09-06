@@ -1,7 +1,7 @@
 const MODELS = ["B200", "B300", "GB200", "GB300"];
 const REFRESH_MS = 30_000;
 const SNAPSHOT_MAX_AGE_MS = 120_000;
-const PROVIDERS = { aws: "AWS", azure: "Microsoft Azure", google: "Google Cloud", gcp: "Google Cloud", vast: "Vast.ai", runpod: "Runpod", lambda: "Lambda", oracle: "Oracle Cloud", nebius: "Nebius", coreweave: "CoreWeave", crusoe: "Crusoe", voltagepark: "Voltage Park" };
+const PROVIDERS = { aws: "AWS", azure: "Microsoft Azure", google: "Google Cloud", gcp: "Google Cloud", vast: "Vast.ai", runpod: "Runpod", lambda: "Lambda", oracle: "Oracle Cloud", nebius: "Nebius", coreweave: "CoreWeave", crusoe: "Crusoe", voltagepark: "Voltage Park", verda: "Verda", hyperstack: "Hyperstack", shadeform: "Shadeform" };
 const REASONS = {
   INSUFFICIENT_MATCHED_OPERATOR_REPORTS: "Awaiting independent source agreement",
   INSUFFICIENT_PROVIDER_GROUPS: "Awaiting sufficient provider coverage",

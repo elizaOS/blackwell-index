@@ -9,11 +9,14 @@ import { OracleNode } from "./network";
 import { allowedObservation, calculate } from "./engine";
 import { collectorCatalog, createCollectors } from "./collectors";
 import { publishSnapshot } from "./pyth/runtime";
+import { backupNode, createRecoveryKey, inspectBackup, RECOVERY_MARKER, restoreNode } from "./recovery";
+import { collectorSchedule, controlledCollectorContext } from "./collection-control";
 import type { NodeIdentity, Observation, SignedBatch } from "./types";
 
 const {values,positionals}=parseArgs({args:process.argv.slice(2),allowPositionals:true,options:{
   config:{type:"string",default:"config/node.local.json"},dir:{type:"string",default:"."},providers:{type:"string"},
   peers:{type:"string"},port:{type:"string"},host:{type:"string"},"allow-loopback":{type:"boolean",default:false},at:{type:"string"},sequence:{type:"string"},
+  output:{type:"string"},input:{type:"string"},"key-file":{type:"string"},target:{type:"string"},
 }});
 const command=positionals[0]??"help";
 const root=resolve(values.dir!), configPath=resolve(root,values.config!);
@@ -34,8 +37,10 @@ async function collect(config:NodeConfig,node:OracleNode,store:Store):Promise<vo
   for(const collector of createCollectors(config.collectors)) {
     const provider=node.options.registry.providers.find(p=>p.id===collector.provider);
     if(!provider?.rights.collect||(provider.rights.expiresAt!==null&&provider.rights.expiresAt<Date.now())) {errors.push(`${collector.id}: collection permission not configured`);continue;}
+    const schedule=collectorSchedule(store,collector.id);
+    if(!schedule.eligible){errors.push(`${collector.id}: ${schedule.code}; nextAttemptAt=${schedule.nextAttemptAt}`);continue;}
     try {
-      const result=await collector.collect({now:Date.now,env:process.env,fetch,archive:r=>store.archive(r)});
+      const result=await collector.collect(controlledCollectorContext(store,collector.id,{now:Date.now,env:process.env,fetch,archive:r=>store.archive(r)}));
       for(const observation of result.observations) {
         const parsed=observationSchema.safeParse(observation);
         if(parsed.success)observations.push(observation);else errors.push(`${collector.id}: observation schema rejected`);
@@ -52,7 +57,7 @@ async function collect(config:NodeConfig,node:OracleNode,store:Store):Promise<vo
   const snapshot=node.snapshot();store.snapshot(snapshot);
   const pyth=config.pythManifestPath?await publishSnapshot(snapshot,readJson(resolve(root,config.pythManifestPath)),store):{status:"DISABLED"};
   output({collectedAt:now,realObservationCount:observations.length,sharedObservationCount:batch.payload.observations.length,
-    models:[...new Set(observations.map(o=>o.model))].sort(),errors,peers,snapshotHash:hash(snapshot),publishable:snapshot.publishable,pyth});
+    models:[...new Set(observations.map(o=>o.model))].sort(),errors,schedules:config.collectors.map(id=>collectorSchedule(store,id)),peers,snapshotHash:hash(snapshot),publishable:snapshot.publishable,pyth});
 }
 async function readSecret():Promise<string> {
   if(!process.stdin.isTTY||!process.stdin.setRawMode)throw new Error("Credentials require a terminal; alternatively set the documented environment variable in a secret manager");
@@ -65,6 +70,23 @@ async function readSecret():Promise<string> {
   });
 }
 async function main():Promise<void> {
+  if(command==="backup-keygen") {
+    if(!values.output)throw new Error("backup-keygen requires --output KEY_FILE");
+    output(createRecoveryKey(resolve(root,values.output)));return;
+  }
+  if(["backup","backup-inspect","restore"].includes(command)) {
+    if(!values["key-file"])throw new Error("Recovery commands require --key-file KEY_FILE");
+    const key=resolve(root,values["key-file"]);
+    if(command==="backup") {
+      if(!values.output)throw new Error("backup requires --output BUNDLE_FILE");
+      output(backupNode(root,configPath,resolve(root,values.output),key));return;
+    }
+    if(!values.input)throw new Error("Recovery requires --input BUNDLE_FILE");
+    if(command==="backup-inspect"){output(inspectBackup(resolve(root,values.input),key));return;}
+    if(!values.target)throw new Error("restore requires --target NEW_DIRECTORY");
+    output(restoreNode(resolve(root,values.input),key,resolve(root,values.target)));return;
+  }
+  if(["run","collect"].includes(command)&&existsSync(resolve(root,RECOVERY_MARKER)))throw new Error("RECOVERY_REVIEW_REQUIRED: review the recovery record before enabling this node");
   // Explicit process/secret-manager values take precedence over this node's local file.
   const localEnv=resolve(root,".env");
   const credentialsPath=resolve(root,"data/credentials.json");
@@ -108,7 +130,7 @@ async function main():Promise<void> {
   }
   if(command==="providers"){output(collectorCatalog);return;}
   if(!["run","collect","status","replay","reproduce"].includes(command)) {
-    process.stdout.write("Blackwell Index node\n\nsetup [--dir PATH] [--providers oracle-public,azure-retail] [--peers https://NODE]\ncredentials COLLECTOR [ENV_NAME]   save one API key locally using hidden terminal input\nproviders              list supported adapters and key requirements\ncollect                collect real data once and sync peers\nrun                    serve API and collect continuously\nstatus                 inspect local counts, identity and readiness\nreplay --at EPOCH_MS    explore observations known at a historical time\nreproduce --sequence N reproduce an archived snapshot with its exact inputs and configuration\n\nAll commands accept --dir and --config. No keys or synthetic prices are bundled.\n");return;
+    process.stdout.write("Blackwell Index node\n\nsetup [--dir PATH] [--providers oracle-public,azure-retail] [--peers https://NODE]\ncredentials COLLECTOR [ENV_NAME]   save one API key locally using hidden terminal input\nproviders              list supported adapters and key requirements\ncollect                collect real data once and sync peers\nrun                    serve API and collect continuously\nstatus                 inspect local counts, identity and readiness\nreplay --at EPOCH_MS    explore observations known at a historical time\nreproduce --sequence N reproduce an archived snapshot with its exact inputs and configuration\nbackup-keygen --output KEY_FILE\nbackup --key-file KEY_FILE --output BUNDLE_FILE\nbackup-inspect --key-file KEY_FILE --input BUNDLE_FILE\nrestore --key-file KEY_FILE --input BUNDLE_FILE --target NEW_DIRECTORY\n\nAll commands accept --dir and --config. No keys or synthetic prices are bundled. Recovery creates a new identity and blocks run/collect pending review.\n");return;
   }
   const {config,node,store}=load();
   if(command==="status") {output({nodeId:node.options.identity.nodeId,counts:store.counts(),coverage:store.captureCounts(),snapshot:node.snapshot(),history:store.verifyHistory()});store.close();return;}

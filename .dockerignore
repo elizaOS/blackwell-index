@@ -5,6 +5,8 @@ data
 .dev.vars*
 .wrangler
 artifacts
+backups
+**/*.sbx-backup
 test
 tests
 docs

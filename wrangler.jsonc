@@ -19,7 +19,7 @@
   "vars": {
     "SBX_NETWORK": "sbx-mainnet",
     "SBX_OPERATOR_GROUP": "elizaos-cloudflare",
-    "SBX_COLLECTORS": "oracle-public,azure-retail",
+    "SBX_COLLECTORS": "oracle-public,azure-retail,verda-public",
     "SBX_COLLECTION_INTERVAL_MS": "300000"
   },
   "routes": [

@@ -171,6 +171,107 @@ describe("CLI subprocess lifecycle (empty-source test configuration; no provider
     expect(missing.stderr).toContain("INVALID_SNAPSHOT_SEQUENCE");
   }, 30_000);
 
+  test("recovery CLI encrypts, inspects and restores without reusing identity or enabling providers", async () => {
+    const source = freshDirectory(), foreignCwd = freshDirectory(), identity = await setup(source);
+    admit(source, [identity]);
+    const collected = await command(source, "collect");
+    expect(collected.code).toBe(0);
+    const snapshotHash = collected.json<{ snapshotHash: string }>().snapshotHash;
+    expect(collected.json()).toMatchObject({ realObservationCount: 0, sharedObservationCount: 0, publishable: false });
+
+    // These protected placeholders are never used in a request. Recovery must not
+    // load them, copy their files, or carry the enabled configuration into restore.
+    const credential = "test-recovery-credential-not-a-real-provider-key";
+    writeJson(source, "data/credentials.json", { LAMBDA_API_KEY: credential });
+    writeFileSync(join(source, ".env"), 'RUNPOD_API_KEY="test-recovery-env-must-not-load"\n', { mode: 0o600 });
+    writeJson(source, "data/private-pyth.json", { testOnly: "not-a-production-pyth-manifest" });
+    const sourceConfig = readJson<NodeConfig>(source, "config/node.local.json");
+    sourceConfig.collectors = ["lambda-cloud"];
+    sourceConfig.peers = ["https://never-contacted.invalid"];
+    sourceConfig.pythManifestPath = "data/private-pyth.json";
+    writeJson(source, "config/node.local.json", sourceConfig);
+    const originals = Object.fromEntries([
+      "data/node-identity.json", "data/node.sqlite", "data/credentials.json", "data/private-pyth.json", ".env",
+      "config/node.local.json", "config/registry.local.json", "config/methodology.local.json",
+    ].map(path => [path, readFileSync(join(source, path))]));
+    const options = { cwd: foreignCwd, preload: assertChildEnvironment(source, { LAMBDA_API_KEY: null, RUNPOD_API_KEY: null }) };
+    const runRecovery = (...args: string[]) => commandAt(source, args, options);
+
+    const generated = await runRecovery("backup-keygen", "--output", "data/recovery.key");
+    expect(generated.code).toBe(0);
+    expect(generated.json<{ keyFile: string }>().keyFile).toBe(join(source, "data/recovery.key"));
+    const keyBytes = readFileSync(join(source, "data/recovery.key"));
+    expect(statSync(join(source, "data/recovery.key")).mode & 0o777).toBe(0o600);
+    const duplicateKey = await runRecovery("backup-keygen", "--output", "data/recovery.key");
+    expect(duplicateKey.code).toBe(1);expect(readFileSync(join(source, "data/recovery.key"))).toEqual(keyBytes);
+
+    const backedUp = await runRecovery("backup", "--key-file", "data/recovery.key", "--output", "data/recovery.sbx-backup");
+    expect(backedUp.code).toBe(0);
+    expect(backedUp.json()).toMatchObject({ sourceNodeId: identity.nodeId, privateKeysIncluded: false, providerCredentialsIncluded: false, reproducedSnapshots: 1 });
+    const bundleBytes = readFileSync(join(source, "data/recovery.sbx-backup"));
+    expect(statSync(join(source, "data/recovery.sbx-backup")).mode & 0o777).toBe(0o600);
+    expect(bundleBytes.toString()).not.toContain(credential);expect(bundleBytes.toString()).not.toContain(identity.privateKeyPem);
+    const duplicateBundle = await runRecovery("backup", "--key-file", "data/recovery.key", "--output", "data/recovery.sbx-backup");
+    expect(duplicateBundle.code).toBe(1);expect(duplicateBundle.stderr).toContain("already exists");
+    expect(readFileSync(join(source, "data/recovery.sbx-backup"))).toEqual(bundleBytes);
+
+    const inspected = await runRecovery("backup-inspect", "--key-file", "data/recovery.key", "--input", "data/recovery.sbx-backup");
+    expect(inspected.code).toBe(0);
+    expect(inspected.json()).toMatchObject({ sourceNodeId: identity.nodeId, history: { valid: true, count: 1 }, reproducedSnapshots: 1,
+      counts: { reports: 1, captures: 1, evidence: 0 }, quarantineProofs: { verified: 0, unavailable: 0, requiresReview: false } });
+    expect((await runRecovery("backup-keygen", "--output", "data/wrong.key")).code).toBe(0);
+    const wrongInspection = await runRecovery("backup-inspect", "--key-file", "data/wrong.key", "--input", "data/recovery.sbx-backup");
+    expect(wrongInspection.code).toBe(1);expect(wrongInspection.stderr).toContain("authentication failed");
+    const wrongRestore = await runRecovery("restore", "--key-file", "data/wrong.key", "--input", "data/recovery.sbx-backup", "--target", "must-not-exist");
+    expect(wrongRestore.code).toBe(1);expect(wrongRestore.stderr).toContain("authentication failed");
+    expect(existsSync(join(source, "must-not-exist"))).toBe(false);
+
+    const restored = join(source, "restored");
+    const restore = await runRecovery("restore", "--key-file", "data/recovery.key", "--input", "data/recovery.sbx-backup", "--target", "restored");
+    expect(restore.code).toBe(0);
+    const restoredIdentity = readJson<NodeIdentity>(restored, "data/node-identity.json");
+    expect(restore.json()).toMatchObject({ destination: restored, sourceNodeId: identity.nodeId, newNodeId: restoredIdentity.nodeId, status: "RECOVERY_REVIEW_REQUIRED" });
+    expect(restoredIdentity.nodeId).not.toBe(identity.nodeId);expect(restoredIdentity.privateKeyPem).not.toBe(identity.privateKeyPem);
+    const restoredConfig = readJson<NodeConfig>(restored, "config/node.local.json");
+    expect(restoredConfig).toMatchObject({ collectors: [], peers: [], host: "127.0.0.1", allowLoopbackPeers: false });
+    expect(restoredConfig.pythManifestPath).toBeUndefined();
+    expect(readJson<Registry>(restored, "config/registry.local.json").operators.some(operator => operator.nodeId === identity.nodeId)).toBe(false);
+    const marker = readJson<{ status: string; sourceNodeId: string; newNodeId: string }>(restored, "data/RECOVERY_REVIEW_REQUIRED.json");
+    expect(marker).toMatchObject({ status: "RECOVERY_REVIEW_REQUIRED", sourceNodeId: identity.nodeId, newNodeId: restoredIdentity.nodeId });
+    for (const path of ["data/credentials.json", "data/private-pyth.json", "data/recovery.key", ".env"]) expect(existsSync(join(restored, path))).toBe(false);
+    expect(statSync(join(restored, "data/node-identity.json")).mode & 0o777).toBe(0o600);
+    expect(statSync(join(restored, "data/node.sqlite")).mode & 0o777).toBe(0o600);
+
+    const status = await commandAt(restored, ["status"], { cwd: foreignCwd });
+    expect(status.code).toBe(0);
+    expect(status.json()).toMatchObject({ nodeId: restoredIdentity.nodeId, counts: { reports: 1, captures: 1 }, history: { valid: true, count: 1 } });
+    const reproduction = await commandAt(restored, ["reproduce", "--sequence", "1"], { cwd: foreignCwd });
+    expect(reproduction.code).toBe(0);
+    expect(reproduction.json()).toMatchObject({ sequence: 1, matches: true, originalHash: snapshotHash, reproducedHash: snapshotHash });
+
+    const duplicateRestore = await runRecovery("restore", "--key-file", "data/recovery.key", "--input", "data/recovery.sbx-backup", "--target", "restored");
+    expect(duplicateRestore.code).toBe(1);expect(duplicateRestore.stderr).toContain("existing data will not be overwritten");
+    expect(readJson<NodeIdentity>(restored, "data/node-identity.json")).toEqual(restoredIdentity);
+    for (const [path, bytes] of Object.entries(originals)) expect(readFileSync(join(source, path))).toEqual(bytes);
+    expect(readFileSync(join(source, "data/recovery.sbx-backup"))).toEqual(bundleBytes);
+
+    // Failures must occur at the recovery marker, before the CLI parses credentials
+    // or loads environment values. A foreign cwd also avoids Bun's own dotenv preload.
+    writeJson(restored, "data/credentials.json", ["invalid-credential-object-must-not-be-read"]);
+    writeFileSync(join(restored, ".env"), 'LAMBDA_API_KEY="test-marker-must-not-load"\n', { mode: 0o600 });
+    const markerOptions = { cwd: foreignCwd, preload: assertChildEnvironment(restored, { LAMBDA_API_KEY: null }) };
+    for (const action of ["run", "collect"]) {
+      const blocked = await commandAt(restored, [action], markerOptions);
+      expect(blocked.code).toBe(1);expect(blocked.stderr).toContain("RECOVERY_REVIEW_REQUIRED");
+      expect(blocked.stderr).not.toContain("Invalid local credential file");expect(blocked.stdout).toBe("");
+    }
+    for (const result of [generated, duplicateKey, backedUp, duplicateBundle, inspected, wrongInspection, wrongRestore, restore, status, reproduction, duplicateRestore]) {
+      expect(result.stdout + result.stderr).not.toContain(credential);
+      expect(result.stdout + result.stderr).not.toContain(identity.privateKeyPem);
+      expect(result.stdout + result.stderr).not.toContain(keyBytes.toString().trim());
+    }
+  }, 60_000);
+
   test("separate localhost processes exchange signed batches and reuse their keys and nonces after restart", async () => {
     const aDirectory = freshDirectory(), bDirectory = freshDirectory();
     const identities = await Promise.all([setup(aDirectory), setup(bDirectory)]);

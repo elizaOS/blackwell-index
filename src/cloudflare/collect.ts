@@ -6,19 +6,25 @@ import type { OracleNode } from "../network";
 import type { Observation } from "../types";
 import { observationSchema } from "../validation";
 import type { runtimeConfig } from "./config";
+import { collectorSchedule, controlledCollectorContext, type CollectionSchedule } from "../collection-control";
 
 /** Shared adapters only: no simulated prices and no credential values in diagnostics. */
 export async function collectCycle(config: ReturnType<typeof runtimeConfig>, node: OracleNode, store: Journal) {
   const startedAt = Date.now(), observations: Observation[] = [], errors: string[] = [];
-  const sources: {collector:string;status:string;observations:number;errors:number;errorCodes?:string[]}[] = [];
+  const sources: {collector:string;status:string;observations:number;errors:number;errorCodes?:string[];schedule?:CollectionSchedule}[] = [];
   for (const collector of createCollectors(config.collectors)) {
     const provider = config.registry.providers.find(p => p.id === collector.provider);
     if (!provider?.rights.collect || (provider.rights.expiresAt !== null && provider.rights.expiresAt < Date.now())) {
       sources.push({collector:collector.id,status:"COLLECTION_NOT_APPROVED",observations:0,errors:0});
       continue;
     }
+    const schedule=collectorSchedule(store,collector.id);
+    if(!schedule.eligible) {
+      sources.push({collector:collector.id,status:"BACKOFF",observations:0,errors:0,schedule});
+      continue;
+    }
     try {
-      const result = await collector.collect({ now:Date.now, env:config.credentials, fetch:fetch.bind(globalThis), archive:r => store.archive(r) });
+      const result = await collector.collect(controlledCollectorContext(store,collector.id,{ now:Date.now, env:config.credentials, fetch:fetch.bind(globalThis), archive:r => store.archive(r) }));
       let accepted = 0, rejected = 0;
       for (const observation of result.observations) {
         const parsed = observationSchema.safeParse(observation);
@@ -28,7 +34,7 @@ export async function collectCycle(config: ReturnType<typeof runtimeConfig>, nod
       const errorCount = result.errors.length + rejected;
       if (errorCount) errors.push(`${collector.id}: ${errorCount} collection or validation errors`);
       const errorCodes = [...new Set(result.errors.map(error => /^([A-Z][A-Z0-9_]{1,63}):/.exec(error)?.[1] ?? "COLLECTION_FAILED"))];
-      sources.push({collector:collector.id,status:errorCount ? "DEGRADED" : "COLLECTED",observations:accepted,errors:errorCount,...(errorCodes.length ? {errorCodes} : {})});
+      sources.push({collector:collector.id,status:errorCount ? "DEGRADED" : "COLLECTED",observations:accepted,errors:errorCount,schedule:collectorSchedule(store,collector.id),...(errorCodes.length ? {errorCodes} : {})});
     } catch {
       errors.push(`${collector.id}: collector failed`);
       sources.push({collector:collector.id,status:"FAILED",observations:0,errors:1});

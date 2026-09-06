@@ -13,6 +13,10 @@ Internal implementation review, September 6, 2026. This is not an independent se
 | Equivocation knowledge stayed on one node | A peer without the conflicting pair could continue using that operator's later reports. | Exchange and validate signed conflict pairs in both directions before ordinary report synchronization. Quarantine survives restart. |
 | Peer push bypassed current source permissions | A previously collected report could be sent after redistribution approval expired or was revoked. | Recheck permission and freshness immediately before push. The same redistribution check applies to public conflict evidence. |
 | Historical replay could use revised configuration | Current membership or weights could change the interpretation of old reports. | Store immutable, hash-addressed configuration; exact reproduction uses the snapshot's configuration and signed input hashes. |
+| Restart could ignore provider throttling | A provider's requested wait could be lost between cycles or deployments. | Persist per-collector 429/503 deadlines, transactional request leases and clock-rollback checks; late success cannot erase a newer throttle. |
+| A valid snapshot chain could contain missing inputs | Hash-chain checks alone could accept an archive that cannot reproduce its prices. | Recovery resolves accepted and rejected report references, checks archived configurations and reproduces every retained calculation exactly. |
+| Restore could resume an old signer | Rewound counters could create conflicting signed reports. | Restore never copies the old private key; it creates a new identity, disables sources/peers/Pyth and blocks run/collect pending review. |
+| SQL routing or proof records could disagree with signed content | Restored metadata could misattribute a report or discard evidence of an excluded signer. | Verify report node/sequence routing, retained counter highwater, conflict signatures and quarantine linkage; missing full proofs require review. |
 
 ## Admission and resource limits
 
@@ -37,7 +41,7 @@ bun run typecheck
 
 Regression coverage includes encoded-signature forgery, report-order independence, path traversal, expired permissions, a repeated single-key candidate flood, total candidate byte exhaustion with signed reports, nonce-preserving admission, forged conflict accusations, bidirectional conflict propagation, bounded proof pagination and configuration integrity. Existing network tests cover restart replay, durable quarantine, multi-node convergence and history-chain tampering. Test fixtures are synthetic only inside tests; they are never production observations.
 
-The separate [Pyth integration](PYTH.md) includes a conformance test against the actual pinned official Rust agent. Local queue acknowledgement is not Pyth publication or settlement proof.
+The separate [Pyth integration](PYTH.md) includes a conformance test against the actual pinned official Rust agent. Local queue acknowledgement is not Pyth publication or settlement proof. Run `bun test test/recovery.test.ts test/collection-control.test.ts` for the recovery and throttling regressions. The [recovery procedure](RECOVERY.md) states the local backup limits and work still required for hosted disaster recovery.
 
 ## Required before production use
 
