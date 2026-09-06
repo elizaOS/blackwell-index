@@ -15,20 +15,17 @@
   <div class="shell">
     <header class="site-header">
       <a class="brand" href="/" aria-label="Blackwell Index home"><span class="brand-mark" aria-hidden="true">B</span><span>Blackwell Index</span></a>
-      <nav aria-label="Main navigation"><a href="/methodology.html">Methodology</a><a href="https://github.com/elizaOS/blackwell-index#run-a-node">Run a node <span aria-hidden="true">↗</span></a></nav>
+      <nav aria-label="Main navigation"><a href="/" aria-current="page">Index</a><a href="/providers.html">Providers</a><a href="/methodology.html">Methodology</a><a href="/v1/demo">API</a><a href="https://github.com/elizaOS/blackwell-index">Source code</a><a href="https://github.com/elizaOS/blackwell-index#run-a-node">Run a node ↗</a></nav>
     </header>
 
     <main id="main">
-      <section class="intro">
-        <h1>Blackwell Index</h1>
-        <p class="intro-copy">Centralized demo · USD / GPU-hour.</p>
-        <p class="status-line" id="connection-status" role="status" aria-live="polite">Loading prices…</p>
-      </section>
+      <p class="status-line" id="connection-status" role="status" aria-live="polite"></p>
 
       <section class="composite-card" aria-labelledby="composite-heading">
         <div class="composite-main">
-          <div class="card-heading"><h2 id="composite-heading">Demo composite</h2></div>
+          <div class="card-heading"><h1 id="composite-heading">Demo composite</h1></div>
           <p class="composite-price" id="composite-price">—</p>
+          <p class="price-unit">USD / GPU-hour</p>
         </div>
       </section>
 
@@ -39,13 +36,8 @@
         <article class="model-card" data-model="GB300"><div class="card-heading"><h2>GB300</h2></div><p class="model-price">—</p></article>
       </section>
 
-      <section class="provider-section" aria-label="Provider prices">
-        <div class="table-wrap"><table><caption class="visually-hidden">Provider prices in USD per GPU-hour. Unavailable prices show a dash.</caption><thead><tr><th scope="col">Provider</th><th scope="col">B200</th><th scope="col">B300</th><th scope="col">GB200</th><th scope="col">GB300</th></tr></thead><tbody id="provider-rows"><tr><td colspan="5" class="empty-state">Loading prices…</td></tr></tbody></table></div>
-      </section>
-
       <noscript><p class="notice">JavaScript is needed to display feed updates. The <a href="/v1/demo">API response</a> is available directly.</p></noscript>
     </main>
-    <footer class="site-footer"><a href="/v1/demo">API</a><div><a href="https://github.com/elizaOS/blackwell-index">Source code</a></div></footer>
   </div>
 </body>
 </html>

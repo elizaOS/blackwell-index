@@ -15,7 +15,7 @@ const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", tim
 let lastSnapshot = null;
 let requestInFlight = false;
 
-function setText(id, value) { document.getElementById(id).textContent = value; }
+function setText(id, value) { const element = document.getElementById(id); if (element) element.textContent = value; }
 function qualified(feed) { return feed?.status === "READY" && typeof feed.price === "string" && /^\d+(?:\.\d{1,6})?$/.test(feed.price) && Number.isFinite(Number(feed.price)) && Number(feed.price) > 0 && Number.isSafeInteger(feed.observedAt) && feed.observedAt > 0; }
 function reason(feed) { return feed?.reasons?.map(value => REASONS[value] ?? value.toLowerCase().replaceAll("_", " ")).join("; ") || "No qualified price is available"; }
 function formatPrice(feed) { return qualified(feed) ? currency.format(Number(feed.price)) : "—"; }
@@ -41,7 +41,7 @@ export function validateSnapshot(data) {
 
 function renderProviders(feeds) {
   const providers = [...new Set(feeds.filter(feed => feed.kind === "PROVIDER" && qualified(feed)).map(feed => feed.provider))].sort();
-  const body = document.getElementById("provider-rows"); body.replaceChildren();
+  const body = document.getElementById("provider-rows"); if (!body) return; body.replaceChildren();
   if (!providers.length) {
     const row = document.createElement("tr"); const cell = document.createElement("td"); cell.colSpan = 5; cell.className = "empty-state"; cell.textContent = "No current provider prices."; row.append(cell); body.append(row);
   }
@@ -63,6 +63,7 @@ function render(snapshot) {
   setText("composite-price", formatPrice(composite));
   for (const model of MODELS) {
     const feed = snapshot.feeds.find(item => item.kind === "MODEL" && item.model === model); const card = document.querySelector(`[data-model="${model}"]`);
+    if (!card) continue;
     card.querySelector(".model-price").textContent = formatPrice(feed);
     card.querySelector(".model-price").setAttribute("aria-label", qualified(feed) ? `${formatPrice(feed)} per GPU-hour` : `Unavailable: ${reason(feed)}`);
   }
@@ -75,7 +76,7 @@ function unavailable(message) {
   setText("connection-status", message);
   setText("composite-price", "—");
   for (const card of document.querySelectorAll("[data-model]")) { card.querySelector(".model-price").textContent = "—"; card.querySelector(".model-price").setAttribute("aria-label", "Unavailable: no current snapshot"); }
-  const body = document.getElementById("provider-rows"); body.replaceChildren(); const row = document.createElement("tr"); const cell = document.createElement("td"); cell.colSpan = 5; cell.className = "empty-state"; cell.textContent = "Prices unavailable. Retrying automatically."; row.append(cell); body.append(row);
+  const body = document.getElementById("provider-rows"); if (!body) return; body.replaceChildren(); const row = document.createElement("tr"); const cell = document.createElement("td"); cell.colSpan = 5; cell.className = "empty-state"; cell.textContent = "Prices unavailable. Retrying automatically."; row.append(cell); body.append(row);
 }
 
 async function refresh() {

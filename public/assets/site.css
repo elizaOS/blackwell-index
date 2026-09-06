@@ -60,3 +60,16 @@ body:not(.altx-page) .reading-page section{margin-top:44px}
 
 .index-page .provider-section{margin-bottom:64px}
 @media(max-width:560px){.index-page .provider-section{margin-bottom:48px}}
+
+/* Page navigation and a focused index view. */
+body:not(.altx-page) .site-header nav{gap:24px;flex-wrap:wrap}
+body:not(.altx-page) .site-header nav a[aria-current="page"]{text-decoration:underline;text-underline-offset:6px}
+.index-page main{padding:96px 0 80px}
+.index-page .card-heading h1{font-size:15px;line-height:1.4;font-weight:600;letter-spacing:-.2px}
+.index-page .composite-main .price-unit{margin-top:18px;font-size:12px}
+.index-page .status-line:not(:empty){margin:0 0 24px}
+.providers-page .provider-section{margin:0}
+@media(max-width:900px){body:not(.altx-page) .site-header{height:auto;min-height:112px;align-items:flex-start;flex-direction:column;justify-content:center;padding:24px 0;gap:24px}body:not(.altx-page) .site-header nav{gap:20px}.index-page main{padding-top:64px}}
+@media(max-width:560px){body:not(.altx-page) .site-header nav{column-gap:22px;row-gap:16px;font-size:12px;line-height:1.5}.index-page main{padding-top:48px}}
+body:not(.altx-page){min-height:100svh}
+@media(max-width:560px){.providers-page table{font-size:11px}.providers-page th,.providers-page td{padding-inline:8px}}

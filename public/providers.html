@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Blackwell Index: provider reference prices for NVIDIA B200, B300, GB200 and GB300 compute, with an open methodology and node software.">
+  <meta name="color-scheme" content="light">
+  <title>Providers — Blackwell Index</title>
+  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/site.css">
+  <script type="module" src="/assets/index.js"></script>
+</head>
+<body class="index-page providers-page">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="shell">
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="Blackwell Index home"><span class="brand-mark" aria-hidden="true">B</span><span>Blackwell Index</span></a>
+      <nav aria-label="Main navigation"><a href="/">Index</a><a href="/providers.html" aria-current="page">Providers</a><a href="/methodology.html">Methodology</a><a href="/v1/demo">API</a><a href="https://github.com/elizaOS/blackwell-index">Source code</a><a href="https://github.com/elizaOS/blackwell-index#run-a-node">Run a node ↗</a></nav>
+    </header>
+
+    <main id="main">
+      <p class="status-line" id="connection-status" role="status" aria-live="polite"></p>
+
+      <h1 class="visually-hidden">Providers</h1>
+      <section class="provider-section" aria-label="Provider prices">
+        <div class="table-wrap"><table><caption class="visually-hidden">Provider prices in USD per GPU-hour. Unavailable prices show a dash.</caption><thead><tr><th scope="col">Provider</th><th scope="col">B200</th><th scope="col">B300</th><th scope="col">GB200</th><th scope="col">GB300</th></tr></thead><tbody id="provider-rows"><tr><td colspan="5" class="empty-state">Loading prices…</td></tr></tbody></table></div>
+      </section>
+
+      <noscript><p class="notice">JavaScript is needed to display feed updates. The <a href="/v1/demo">API response</a> is available directly.</p></noscript>
+    </main>
+  </div>
+</body>
+</html>
