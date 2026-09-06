@@ -22,7 +22,7 @@ Unit tests use isolated wire and RPC fixtures. They test decoding and failure ha
 
 ## Remaining integration
 
-1. Reuse the readback catalog and binding checks rather than creating another assignment policy. Require actual approved numeric SBX IDs, symbols, exponents, channels, quote currency and minimum publisher counts.
+1. Wire the shared readback catalog and binding checks into the signed orchestrator. The pure batch checker now reuses feed policy, but does not itself authenticate bytes or approve a manifest. Require actual approved numeric SBX IDs, symbols, exponents, channels, quote currency and minimum publisher counts.
 2. Fetch signed updates with the existing bounded authenticated transport. Verify every batch and require the complete expected feed set.
 3. Apply the existing source/price freshness, exact mantissa, confidence, expected-print and replay checks to contract-returned bytes only. Recheck all batches at completion and revalidate approval expiry.
 4. Reproduce expected prints from the local journal. Do not trust command-line prices or unsigned adjacent JSON as expected SBX evidence.
