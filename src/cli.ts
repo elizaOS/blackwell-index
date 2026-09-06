@@ -16,6 +16,7 @@ import { HOSTED_EXPORT_LIMITS } from "./hosted-export";
 import { Database } from "bun:sqlite";
 import { operatingStudy } from "./study";
 import { streamingStudy } from "./stream-study";
+import { shadowStudy } from "./shadow";
 import { backupStreamFrames, inspectStreamBackup, restoreStreamNode } from "./stream-recovery";
 import { backupLocalStreamNode } from "./local-backup";
 import { ARCHIVE_LIMITS } from "./archive-protocol";
@@ -177,6 +178,27 @@ async function main():Promise<void> {
     }finally{database.close();}
     return;
   }
+  if(command==="shadow") {
+    const at=studyTime(values.at)??Date.now(),from=studyTime(values.from);
+    if(from!==undefined&&from>at)throw new Error("Shadow start must not exceed its knowledge cutoff");
+    if(values.output!==undefined&&!values.output)throw new Error("Shadow output requires a new filename");
+    const destination=values.output===undefined?null:resolve(root,values.output);
+    if(destination&&existsSync(destination))throw new Error("Shadow output already exists");
+    const config=parseConfig(readJson(configPath));
+    const registry=parseRegistry(readJson(resolve(root,config.registryPath))),methodology=parseMethodology(readJson(resolve(root,config.methodologyPath)));
+    if(config.network!==registry.network)throw new Error("Config and registry network mismatch");
+    const database=new Database(resolve(root,config.databasePath),{readonly:true,strict:true});
+    try {
+      const report=shadowStudy(database as unknown as SqlDriver,registry,methodology,{asOf:at,expectedIntervalMs:config.intervalMs,...(from===undefined?{}:{from})});
+      if(destination)writeNew(destination,`${JSON.stringify(report,null,2)}\n`);
+      output({kind:report.kind,privacy:report.privacy,asOf:report.asOf,reportSaved:destination!==null,
+        complete:report.completeness.complete,publishable:false,liveMarketQualified:false,
+        captures:report.window.captures,researchGroups:report.panel.groups,requiredProductionGroups:report.panel.requiredProductionGroups,
+        currentResearchPriceAvailable:report.current.price!==null,scenarioCount:report.scenarios.length,
+        qualificationBlockers:report.qualification?.blockers??[report.qualificationError],sustainedQualification:report.sustainedOperation.qualification});
+    }finally{database.close();}
+    return;
+  }
   if(command==="backup-keygen") {
     if(!values.output)throw new Error("backup-keygen requires --output KEY_FILE");
     output(createRecoveryKey(resolve(root,values.output)));return;
@@ -237,7 +259,7 @@ async function main():Promise<void> {
   }
   if(command==="providers"){output(collectorCatalog);return;}
   if(!["run","collect","status","replay","reproduce"].includes(command)) {
-    process.stdout.write("Blackwell Index node\n\nsetup [--dir PATH] [--providers oracle-public,azure-retail] [--peers https://NODE]\ncredentials COLLECTOR [ENV_NAME]   save one API key locally using hidden terminal input\nproviders              list supported adapters and key requirements\ncollect                collect real data once and sync peers\nrun                    serve API and collect continuously\nstatus                 inspect local counts, identity and readiness\nreplay --at EPOCH_MS    explore observations known at a historical time\nreproduce --sequence N reproduce an archived snapshot with its exact inputs and configuration\nstudy [--stream] [--at EPOCH_MS] [--from EPOCH_MS] [--output PRIVATE_JSON]   inspect retained captures; stdout contains counts only\nbackup-keygen --output KEY_FILE\nbackup --key-file KEY_FILE --output BUNDLE_FILE\nbackup-inspect --key-file KEY_FILE --input BUNDLE_FILE\nrestore --key-file KEY_FILE --input BUNDLE_FILE --target NEW_DIRECTORY\nimport-hosted-backup --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --output BUNDLE_FILE   consume signed private export from stdin\nimport-stream-backup --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --output BUNDLE_FILE   consume private V2 source frames from stdin\nbackup-stream --operator-group GROUP --expected-node-id NODE_ID --expected-release LOCAL_BUILD_SHA --key-file KEY_FILE --output BUNDLE_FILE   back up a recovered local V2 journal\nbackup-stream-inspect --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --input BUNDLE_FILE\nrestore-stream --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --input BUNDLE_FILE --target NEW_DIRECTORY\n\nStreaming recovery accepts --max-archive-bytes. study --stream produces bounded private aggregates without point arrays.\nAll commands accept --dir and --config. No keys or synthetic prices are bundled. Recovery creates a new identity and blocks run/collect pending review.\n");return;
+    process.stdout.write("Blackwell Index node\n\nsetup [--dir PATH] [--providers oracle-public,azure-retail] [--peers https://NODE]\ncredentials COLLECTOR [ENV_NAME]   save one API key locally using hidden terminal input\nproviders              list supported adapters and key requirements\ncollect                collect real data once and sync peers\nrun                    serve API and collect continuously\nstatus                 inspect local counts, identity and readiness\nreplay --at EPOCH_MS    explore observations known at a historical time\nreproduce --sequence N reproduce an archived snapshot with its exact inputs and configuration\nstudy [--stream] [--at EPOCH_MS] [--from EPOCH_MS] [--output PRIVATE_JSON]   inspect retained captures; stdout contains counts only\nshadow [--at EPOCH_MS] [--from EPOCH_MS] [--output PRIVATE_JSON]   private B200 qualification and stress research\nbackup-keygen --output KEY_FILE\nbackup --key-file KEY_FILE --output BUNDLE_FILE\nbackup-inspect --key-file KEY_FILE --input BUNDLE_FILE\nrestore --key-file KEY_FILE --input BUNDLE_FILE --target NEW_DIRECTORY\nimport-hosted-backup --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --output BUNDLE_FILE   consume signed private export from stdin\nimport-stream-backup --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --output BUNDLE_FILE   consume private V2 source frames from stdin\nbackup-stream --operator-group GROUP --expected-node-id NODE_ID --expected-release LOCAL_BUILD_SHA --key-file KEY_FILE --output BUNDLE_FILE   back up a recovered local V2 journal\nbackup-stream-inspect --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --input BUNDLE_FILE\nrestore-stream --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --input BUNDLE_FILE --target NEW_DIRECTORY\n\nStreaming recovery accepts --max-archive-bytes. study --stream produces bounded private aggregates without point arrays.\nAll commands accept --dir and --config. No keys or synthetic prices are bundled. Recovery creates a new identity and blocks run/collect pending review.\n");return;
   }
   const {config,node,store}=load();
   if(command==="status") {output({nodeId:node.options.identity.nodeId,counts:store.counts(),coverage:store.captureCounts(),snapshot:node.snapshot(),history:store.verifyHistory()});store.close();return;}
