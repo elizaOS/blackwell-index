@@ -5,7 +5,7 @@ This checklist is the completion contract for the public oracle. Software tests,
 | Requirement | Current evidence | Next action |
 | --- | --- | --- |
 | Four domains | Purchased for $78.06; DNS, HTTPS, both sites and canonical redirects verified | Assign renewal owner; automatic renewal is off |
-| Public open source repository | Public elizaOS/blackwell-index, source and tests pushed | Inspect terminal hosted checks for the exact final revision |
+| Public open source repository | Public elizaOS/blackwell-index; Linux, container and Pyth protocol checks passed for the deployed follow-up release | Continue exact-revision verification on every change |
 | Real source collection | Public Oracle all-four and Azure GB200 retrievals verified | Continue scheduled collection; inspect coverage and source errors |
 | AWS credentials | Not supplied | Read-only Pricing IAM principal, access key/secret or equivalent approved runtime identity; optional session token |
 | Google credentials and SKU map | Not supplied | Enable Cloud Billing Catalog API; API key/project; capture complete Blackwell component SKUs and reviewed instance mapping |
@@ -21,7 +21,7 @@ This checklist is the completion contract for the public oracle. Software tests,
 | Pyth signer | Integration tested against official agent locally | Separate protected production key, relayer access, funded infrastructure if required by agreed terms |
 | Pyth consumer access | Not supplied | Hermes/Pro API account and appropriate public redistribution terms |
 | Onchain verification | Not performed | Select supported target chain, official upgraded contract, RPC and gas wallet; submit and inspect actual signed update |
-| Production operations | Two hosted nodes collecting real Oracle/Azure data; scheduled production recurrence and local restart verified | Production redeployment, monitors, paging owner, backups, restore, key rotation, outages and peer-failure exercises |
+| Production operations | Two hosted nodes collecting real Oracle/Azure data; scheduled recurrence and identity/history persistence across redeployment verified | Monitors, paging owner, backups, restore, key rotation, outages and peer-failure exercises |
 | Historical validation | Real collection begins now | Accumulate genuine coverage; obtain licensed historical records; no synthetic backfill or future membership look-ahead |
 | External audit and benchmark review | Internal independent code review and tests | Security assessment, methodology validation, legal/data-rights review and signed release decision |
 
