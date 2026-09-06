@@ -62,6 +62,8 @@ The exporter checks the private copy before encryption, then independently impor
 
 Prior descriptor, seal, ciphertext digest and byte count become a hash-addressed configuration record linked by the new signed descriptor. All older records remain in the archive; references do not nest whole archives. Inspection verifies receipt signatures, hashes and ancestry (maximum 1,024 records, 256 generations, 48 KiB per receipt). `ciphertextVerification: NOT_PERFORMED` means prior ciphertext was not supplied or recomputed; retain those original archives and keys separately for independent custody verification. Receipts alone do not prove row-by-row equivalence with earlier archives. The current archive is fully authenticated and its retained journal is inspected.
 
+For Pyth-enabled journals, a separate signed `pythStateHash` binds validated submission high-water marks, queue receipts and source process locks. Restore preserves high-water marks and receipts but clears active process locks; publishing remains disabled. Inherited high-water marks cannot disappear or decrease on re-backup. Upgrade older readers before using these archives. See [Pyth publishing-state recovery](PYTH_RECOVERY.md) for exact limits and the required post-backup signer reconciliation.
+
 ## Resource limits and failure behavior
 
 | Boundary | Limit |

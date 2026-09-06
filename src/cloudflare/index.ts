@@ -1,4 +1,5 @@
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
+import { latestDemoResponse, demoRegistry } from "../demo";
 import { generateIdentity } from "../crypto";
 import { OracleNode } from "../network";
 import type { NodeIdentity } from "../types";
@@ -65,6 +66,10 @@ export class SbxNode extends DurableObject<WorkerEnvironment> {
     if (path === "/internal/wake" && request.method === "POST") {
       if (await this.ctx.storage.getAlarm() === null) await this.ctx.storage.setAlarm(Date.now() + 1000);
       return json({scheduled:true});
+    }
+    if (path === "/v1/demo" && request.method === "GET") {
+      const result=latestDemoResponse(this.journal.db,demoRegistry(this.config.registry),this.config.methodology,this.identity,Date.now());
+      return json(result.body,result.status);
     }
     if (path === "/v1/status" && request.method === "GET") {
       const base = await this.node.handle(request, request.headers.get("x-sbx-client-ip") ?? "unknown");

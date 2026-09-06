@@ -25,17 +25,20 @@ export const runpod: Collector = {
           const offer = object(row.lowestPrice);
           if (offer.uninterruptablePrice === null || offer.uninterruptablePrice === undefined) continue;
           const price = fromMicros(toMicros(decimal(offer.uninterruptablePrice)));
-          const counts = array(offer.availableGpuCounts).map(count => positiveInteger(count, "availableGpuCounts"));
+          // Runpod's nullable [Int] field can omit deployment-size information.
+          // Null is not an empty inventory list; missing/malformed fields still fail.
+          const counts = offer.availableGpuCounts === null ? null : array(offer.availableGpuCounts).map(count => positiveInteger(count, "availableGpuCounts"));
           // Multi-GPU-only inventory cannot support the one-GPU quote this query requested.
-          const state = string(offer.stockStatus, "stockStatus");
-          if (!["High", "Medium", "Low", "None"].includes(state)) throw new CollectionError("INVALID_SCHEMA", "Unknown Runpod stockStatus");
-          const available = state !== "None" && counts.includes(1);
+          const state = offer.stockStatus === null ? null : string(offer.stockStatus, "stockStatus");
+          if (state !== null && !["High", "Medium", "Low", "None"].includes(state)) throw new CollectionError("INVALID_SCHEMA", "Unknown Runpod stockStatus");
+          const availability = state === "None" || counts !== null && !counts.includes(1) ? "UNAVAILABLE"
+            : state === null || counts === null ? "UNKNOWN" : "AVAILABLE";
           result.observations.push({
             schemaVersion: 1, provider: this.provider, source: this.id, sku: string(row.id, "gpuType.id"), model,
             region: "global", procurement: "ON_DEMAND", priceBasis: "LIST", priceScope: "PUBLIC", tenancy: "EXCLUSIVE",
             currency: "USD", unit: "USD_PER_GPU_HOUR", price, instancePrice: price, gpuCount: 1,
-            includes: ["gpu"], availableGpuCount: null, availability: available ? "AVAILABLE" : "UNAVAILABLE",
-            minimumOrderGpuCount: counts.length ? Math.min(...counts) : null, sourceRecordId: string(row.id),
+            includes: ["gpu"], availableGpuCount: null, availability,
+            minimumOrderGpuCount: counts?.length ? Math.min(...counts) : null, sourceRecordId: string(row.id),
             observedAt: response.observedAt, priceEffectiveAt: null, expiresAt: null, sourceUrl: response.sourceUrl, evidenceHash: response.evidenceHash,
           });
         } catch (error) { result.errors.push(failure(error, this.id)); }

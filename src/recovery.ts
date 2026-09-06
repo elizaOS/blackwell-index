@@ -9,6 +9,7 @@ import { parseConfig, type NodeConfig } from "./config";
 import { canonical, generateIdentity, hash, nodeIdFor, verifyBatch } from "./crypto";
 import { calculate } from "./engine";
 import { Journal, validateEquivocationProof, type SqlDriver } from "./journal";
+import { resetRecoveredPythLocks, verifyPythRuntimeState } from "./pyth/recovery-state";
 import { parseMethodology, parseRegistry, signedBatchSchema } from "./validation";
 import type { SignedBatch } from "./types";
 
@@ -55,10 +56,11 @@ function temporary<T>(operation:(path:string)=>T):T {
     rmdirSync(directory);
   }
 }
-function verifyDatabase(path:string,sourceNodeId:string) {
+function verifyDatabase(path:string,sourceNodeId:string,cutoffMs=Date.now()) {
   const database=new Database(path,{readonly:true,strict:true});
   try {
     if((database.query("PRAGMA integrity_check").get() as {integrity_check:string}).integrity_check!=="ok")throw new Error("Recovery database integrity check failed");
+    const pythRecovery=verifyPythRuntimeState(database as unknown as SqlDriver,cutoffMs);
     const journal=new Journal(database as unknown as SqlDriver);
     const history=journal.verifyHistory();
     if(!history.valid)throw new Error("Recovery snapshot history verification failed");
@@ -120,7 +122,7 @@ function verifyDatabase(path:string,sourceNodeId:string) {
       if(hash(reproduced)!==hash(original))throw new Error("Recovery snapshot calculation reproduction mismatch");
       reproducedSnapshots++;
     }
-    return {history,counts:journal.counts(),coverage:journal.captureCounts(),reproducedSnapshots,
+    return {history,counts:journal.counts(),coverage:journal.captureCounts(),reproducedSnapshots,pythRecovery,
       quarantineProofs:{verified:verifiedProofs,unavailable:quarantinesWithoutProof,requiresReview:quarantinesWithoutProof>0}};
   } finally {database.close();}
 }
@@ -148,8 +150,8 @@ export function backupNode(root:string,configPath:string,outputPath:string,keyPa
       source.query("VACUUM INTO ?").run(path);
     } finally {source.close();}
     chmodSync(path,0o600);
-    const verified=verifyDatabase(path,identity.nodeId),database=regularBytes(path,MAX_DATABASE_BYTES);
-    const payload={format:FORMAT,createdAt:Date.now(),source:{nodeId:identity.nodeId,publicKey:identity.publicKey},configuration,registry,methodology,
+    const createdAt=Date.now(),verified=verifyDatabase(path,identity.nodeId,createdAt),database=regularBytes(path,MAX_DATABASE_BYTES);
+    const payload={format:FORMAT,createdAt,source:{nodeId:identity.nodeId,publicKey:identity.publicKey},configuration,registry,methodology,
       database:{sha256:digest(database),body:database.toString("base64")}};
     const nonce=randomBytes(12),cipher=createCipheriv("aes-256-gcm",key,nonce);cipher.setAAD(AAD);
     const ciphertext=Buffer.concat([cipher.update(canonical(payload)),cipher.final()]);
@@ -183,13 +185,23 @@ function decryptBackup(inputPath:string,keyPath:string) {
 
 export function inspectBackup(inputPath:string,keyPath:string) {
   const data=decryptBackup(inputPath,keyPath);
-  return temporary(path=>{newFile(path,data.database);return {sourceNodeId:data.payload.source.nodeId,createdAt:data.payload.createdAt,databaseBytes:data.database.length,...verifyDatabase(path,data.payload.source.nodeId)};});
+  return temporary(path=>{newFile(path,data.database);return {sourceNodeId:data.payload.source.nodeId,createdAt:data.payload.createdAt,databaseBytes:data.database.length,...verifyDatabase(path,data.payload.source.nodeId,data.payload.createdAt)};});
 }
 
 export function restoreNode(inputPath:string,keyPath:string,destination:string) {
   if(existsSync(destination))throw new Error("Recovery requires a new destination directory; existing data will not be overwritten");
   const data=decryptBackup(inputPath,keyPath);
-  const verified=temporary(path=>{newFile(path,data.database);return verifyDatabase(path,data.payload.source.nodeId);});
+  const {verified,restoredDatabase}=temporary(path=>{
+    newFile(path,data.database);
+    const verified=verifyDatabase(path,data.payload.source.nodeId,data.payload.createdAt);
+    if(verified.pythRecovery.present) {
+      // A recovered process cannot inherit an earlier process's lease. Preserve the
+      // publisher's attempted/queued high-water marks and receipt bytes unchanged.
+      const database=new Database(path,{strict:true});
+      try {resetRecoveredPythLocks(database as unknown as SqlDriver);} finally {database.close();}
+    }
+    return {verified,restoredDatabase:regularBytes(path,MAX_DATABASE_BYTES)};
+  });
   const identity=generateIdentity();
   const configuration:NodeConfig={schemaVersion:1,network:data.configuration.network,identityPath:"data/node-identity.json",databasePath:"data/node.sqlite",
     registryPath:"config/registry.local.json",methodologyPath:"config/methodology.local.json",host:"127.0.0.1",port:data.configuration.port,intervalMs:data.configuration.intervalMs,
@@ -198,12 +210,13 @@ export function restoreNode(inputPath:string,keyPath:string,destination:string) 
   parseRegistry(registry);parseConfig(configuration);
   mkdirSync(destination,{mode:0o700});
   const marker={status:"RECOVERY_REVIEW_REQUIRED",sourceNodeId:data.payload.source.nodeId,newNodeId:identity.nodeId,restoredAt:Date.now(),
-    requirements:["Keep the old signer stopped or explicitly revoke it; this restore never reuses its private key.","Reconcile retained history and source rights; configure collectors, credentials and peers.","Obtain independent-operator admission for the new identity; do not reset old signing counters.","Review Pyth configuration separately; no Pyth signer, provider credentials or publication manifest was restored.","After documented operator review, remove this marker to permit collection or serving."]};
+    pythRecovery:verified.pythRecovery,pythRuntimeLocksCleared:verified.pythRecovery.locks,
+    requirements:["Keep the old signer stopped or explicitly revoke it; this restore never reuses its private key.","Reconcile retained history and source rights; configure collectors, credentials and peers.","Obtain independent-operator admission for the new identity; do not reset old signing counters.","Review Pyth configuration separately; no Pyth signer, provider credentials or publication manifest was restored.","Before enabling Pyth, stop or revoke the old Pyth publisher and reconcile its latest high-water marks, including attempts after this backup. Preserved local queue receipts do not prove upstream publication.","After documented operator review, remove this marker to permit collection or serving."]};
   newFile(join(destination,RECOVERY_MARKER),JSON.stringify(marker,null,2)+"\n");
-  newFile(join(destination,configuration.databasePath),data.database);
+  newFile(join(destination,configuration.databasePath),restoredDatabase);
   newFile(join(destination,configuration.identityPath),canonical(identity));
   newFile(join(destination,configuration.registryPath),JSON.stringify(registry,null,2)+"\n");
   newFile(join(destination,configuration.methodologyPath),JSON.stringify(data.methodology,null,2)+"\n");
   newFile(join(destination,"config/node.local.json"),JSON.stringify(configuration,null,2)+"\n");
-  return {destination,sourceNodeId:data.payload.source.nodeId,newNodeId:identity.nodeId,status:marker.status,...verified};
+  return {destination,sourceNodeId:data.payload.source.nodeId,newNodeId:identity.nodeId,status:marker.status,pythRuntimeLocksCleared:verified.pythRecovery.locks,...verified};
 }

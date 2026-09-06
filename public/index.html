@@ -15,17 +15,17 @@
   <div class="shell">
     <header class="site-header">
       <a class="brand" href="/" aria-label="Blackwell Index home"><span>Blackwell Index</span></a>
-      <nav aria-label="Main navigation"><a href="/" aria-current="page">Index</a><a href="/providers.html">Providers</a><a href="/methodology.html">Methodology</a><a href="/v1/demo">API</a><a href="https://github.com/elizaOS/blackwell-index">Source code</a><a href="https://github.com/elizaOS/blackwell-index#run-a-node">Run a node ↗</a><span class="mode-switch" role="group" aria-label="Price mode"><a href="?mode=demo" data-mode="demo">Demo</a><a href="?mode=real" data-mode="real">Real</a></span></nav>
+      <nav aria-label="Main navigation"><a href="/" aria-current="page">Index</a><a href="/providers.html">Providers</a><a href="/methodology.html">Methodology</a><a href="/v1/demo">API</a><a href="https://github.com/elizaOS/blackwell-index">Source code</a><a href="https://github.com/elizaOS/blackwell-index#run-a-node">Run a node ↗</a></nav>
     </header>
 
     <main id="main">
       <h1 class="visually-hidden">Blackwell Index prices</h1>
-      <p class="status-line" id="connection-status" role="status" aria-live="polite">Loading current prices…</p>
+      <p class="visually-hidden" id="connection-status" role="status" aria-live="polite">Loading current prices…</p>
 
       <section class="composite-card" aria-label="Composite price in USD per GPU-hour">
         <div class="composite-main">
           <p class="composite-price" id="composite-price">—</p>
-          <p class="price-unit">USD per physical GPU-hour</p>
+          <p class="visually-hidden">USD per physical GPU-hour</p>
         </div>
       </section>
 
