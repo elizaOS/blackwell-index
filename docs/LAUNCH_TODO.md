@@ -39,6 +39,8 @@ Do not paste API keys or private keys into issues or chat. Use `credentials`, en
 
 Use the [operating study](OPERATING_STUDY.md) to inspect retained private observations and dated gaps. It does not establish 30 consecutive days of qualified operation or authorize publication.
 
+The next capacity release must implement the complete [streaming recovery plan](STREAMING_RECOVERY_PLAN.md), including local inspection/restore and full-period study support. Raising export limits or completing only the download path is insufficient.
+
 Continue research collection while these are unresolved. Do not enable public prices, Pyth submission or a financial-reference claim merely to make the dashboard look complete.
 
 ## Pyth onboarding packet to prepare

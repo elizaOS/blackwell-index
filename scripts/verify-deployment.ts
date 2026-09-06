@@ -1,4 +1,4 @@
-/** Read-only acceptance checks for the deliberately non-publishing development network. */
+/** Public read checks and empty recovery-route denial probes for the development network. */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -37,7 +37,7 @@ async function main(): Promise<void> {
     help: { type: "boolean", default: false },
   } });
   if (values.help) {
-    console.log("bun scripts/verify-deployment.ts --release <40-character commit SHA> [--index HTTPS_ORIGIN] [--altx HTTPS_ORIGIN] [--primary HTTPS_ORIGIN] [--secondary HTTPS_ORIGIN] [--aliases HTTPS_ORIGIN,HTTPS_ORIGIN] [--timeout-ms 15000] [--max-age-ms 900000]\n\nGET only. Verifies local public assets and the current non-publishing development-network contract. No credentials, TLS bypass, provider calls or writes.");
+    console.log("bun scripts/verify-deployment.ts --release <40-character commit SHA> [--index HTTPS_ORIGIN] [--altx HTTPS_ORIGIN] [--primary HTTPS_ORIGIN] [--secondary HTTPS_ORIGIN] [--aliases HTTPS_ORIGIN,HTTPS_ORIGIN] [--timeout-ms 15000] [--max-age-ms 900000]\n\nPublic GET checks and empty POST denial probes on recovery paths. Verifies local public assets and the current non-publishing development-network contract. No credentials, TLS bypass or provider calls; never contacts the authenticated recovery binding.");
     return;
   }
   requireValue(values.release && /^[a-f0-9]{40}$/.test(values.release), "--release requires the exact 40-character lowercase commit SHA");
@@ -57,8 +57,8 @@ async function main(): Promise<void> {
   const deniedStatuses: Record<string, number> = {};
   let checks = 0, privateRoutesChecked = 0;
 
-  async function request(url: URL, readBody = true) {
-    const response = await fetch(url, { method: "GET", redirect: "manual", headers: { "user-agent": "blackwell-index-release-verifier/0.1", "cache-control": "no-cache" }, signal: AbortSignal.any([deadline, AbortSignal.timeout(timeoutMs)]) });
+  async function request(url: URL, readBody = true, method:"GET"|"POST"="GET") {
+    const response = await fetch(url, { method, redirect: "manual", headers: { "user-agent": "blackwell-index-release-verifier/0.1", "cache-control": "no-cache" }, signal: AbortSignal.any([deadline, AbortSignal.timeout(timeoutMs)]) });
     if (!readBody) { await response.body?.cancel(); return { status: response.status, headers: response.headers, bytes: new Uint8Array() }; }
     const reader = response.body?.getReader();
     requireValue(reader && Number(response.headers.get("content-length") ?? 0) <= MAX_BYTES, "Missing or oversized response body");
@@ -155,6 +155,13 @@ async function main(): Promise<void> {
     requireValue([401, 403, 404, 405, 410].includes(response.status), `Private route returned HTTP ${response.status}; expected an explicit denial or absence`);
     privateRoutesChecked++; deniedStatuses[String(response.status)] = (deniedStatuses[String(response.status)] ?? 0) + 1;
   }));
+  // The internal export accepts POST, so GET denial alone does not prove its public isolation.
+  for(const base of [index,altx,primary,secondary])for(const path of ["/internal/export-recovery","/node/primary/internal/export-recovery"])
+    tasks.push(()=>check(`private POST ${base.origin}${path}`,async()=>{
+      const response=await request(new URL(path,base),false,"POST");
+      requireValue([401,403,404,405,410].includes(response.status),`Private POST returned HTTP ${response.status}; expected explicit denial or absence`);
+      privateRoutesChecked++;deniedStatuses[String(response.status)]=(deniedStatuses[String(response.status)]??0)+1;
+    }));
   let next = 0;
   await Promise.all(Array.from({ length: 4 }, async () => { while (next < tasks.length) await tasks[next++]!(); }));
   await check("node independence and public-site routing", async () => {

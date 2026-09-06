@@ -34,6 +34,17 @@ Signed-export checkpoints:
 
 This is local recovery from live hosted exports, not separate offsite custody or a host-loss exercise. The first transport emitted a Wrangler RPC-stub cleanup warning despite successful verification. A follow-up uses native private Fetcher bindings for both hops; verify its deployed revision and warning-free live acceptance separately.
 
+### Native Fetcher follow-up
+
+Revision `a32099203f23a0805a042486785fc2ed9f12dba9` deployed as Worker version `e383920c-ff1e-4431-804c-133cf85e74b2`. Its [exact-revision workflow](https://github.com/elizaOS/blackwell-index/actions/runs/34045350292) passed all jobs, including the native-Fetcher workerd drill and 14 public GET/POST export-denial requests. At 16:25 UTC, all 80 live checks passed, including 68 denied private paths. Both original identities and ongoing real collection were unchanged.
+
+The native private export then succeeded for both live nodes with no RPC-stub warning. Each bundle reproduced 91 retained snapshots and materialized a 12,922,880-byte journal. Both isolated restores created new disabled identities, and both serving and collection were blocked by their review markers. The primary's complete private study examined 5,604 observations across 64 series with no configured anomalies or empty completed capture buckets at that cutoff. This extends the checkpoint evidence, not the benchmark qualification claim.
+
+At 16:31 UTC, the extended verifier passed 88 checks against the same revision. Its 76 private-route probes included empty POST requests to the actual internal export paths on all four public hosts; each returned 404. Checking GET alone would not prove isolation of a POST-only export handler.
+
+- Primary signed-export checkpoint: `ac3b538dbbc0f0ec8373c269d2397f10d42791191a244d52819dd73c867a8a01`.
+- Secondary signed-export checkpoint: `23277c4285135fc222476af759514e58146a82227d265d634303d34df43d45a5`.
+
 ## First retained-data study
 
 Each restored journal contained 5,476 real observations across 64 distinct source/SKU/commercial-term series. The private study scanned all retained observations without truncation, detected no configured anomalies, and found a retained evidence reference for every observation. The separate recovery verifier authenticated the evidence bodies; the study itself checks only links and receipt times.
@@ -42,6 +53,6 @@ The primary's retained span was about 7.38 hours. At each study's actual cutoff 
 
 ## Outstanding requirements
 
-The primary signed logical export was 6,600,693 bytes against an 8,388,608-byte cap. Larger-journal streaming/archive support is an immediate capacity task, not an optional long-term enhancement. Do not delete retained evidence or counters to fit the cap. No sustained recovery capacity is claimed.
+The primary signed logical export was 6,600,693 bytes against an 8,388,608-byte cap; the later 91-cycle export was 6,751,809 bytes. Larger-journal streaming/archive support is an immediate capacity task, not an optional long-term enhancement. The [streaming recovery plan](STREAMING_RECOVERY_PLAN.md) covers checkpoint consistency, bounded transfer, encryption, full restore and the study's separate observation limit. Do not delete retained evidence or counters to fit the cap. No sustained recovery capacity is claimed.
 
 The [launch requirements](LAUNCH_TODO.md) remain open: source accounts and usage rights, Pyth publisher/feed admission and production readback, verified independent operators, approved source groups and weights, external review, sustained real history, offsite destination, separate key custody, paging and recovery ownership. See [hosted recovery](HOSTED_RECOVERY.md) and [operating-study limits](OPERATING_STUDY.md).
