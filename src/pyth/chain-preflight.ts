@@ -68,7 +68,8 @@ function block(value:unknown,clock:number):Block {
   if(timestamp===0n||timestamp*1000n>BigInt(clock)+5000n||BigInt(clock)-timestamp*1000n>BigInt(PYTH_PREFLIGHT_LIMITS.maxBlockAgeMs))fail("BLOCK_CLOCK_INVALID");
   return {number:raw.number as string,hash:raw.hash,timestamp:raw.timestamp as string};
 }
-async function rpc(url:string,id:number,method:string,params:unknown[],request:typeof fetch,signal:AbortSignal,timeout:number):Promise<unknown> {
+/** Shared bounded transport for reviewed read-only chain adapters. Not a public API route. */
+export async function pythReadOnlyRpc(url:string,id:number,method:string,params:unknown[],request:typeof fetch,signal:AbortSignal,timeout:number):Promise<unknown> {
   const controller=new AbortController();let reader:ReadableStreamDefaultReader<Uint8Array>|undefined,response:Response|undefined;
   let rejectAbort:(error:PreflightFailure)=>void=()=>{};
   const aborted=new Promise<never>((_,reject)=>{rejectAbort=reject;});void aborted.catch(()=>{});
@@ -112,7 +113,7 @@ export async function preflightPythBase(options:PythChainPreflightOptions={},dep
     const timeout=dependencies.requestTimeoutMs??PYTH_PREFLIGHT_LIMITS.requestTimeoutMs;
     if(!Number.isSafeInteger(timeout)||timeout<1||timeout>PYTH_PREFLIGHT_LIMITS.requestTimeoutMs)fail("TIMEOUT_INVALID");
     if(options.signal?.aborted)fail("ABORTED");let id=0;
-    const call=(method:string,params:unknown[])=>rpc(selected.rpc,++id,method,params,dependencies.fetch??fetch,controller.signal,timeout);
+    const call=(method:string,params:unknown[])=>pythReadOnlyRpc(selected.rpc,++id,method,params,dependencies.fetch??fetch,controller.signal,timeout);
     if(quantity(await call("eth_chainId",[]))!==BigInt(selected.chainId))fail("CHAIN_ID_MISMATCH");
     const sealed=block(await call("eth_getBlockByNumber",["latest",false]),now(clock));
     const pinned={blockHash:sealed.hash,requireCanonical:true};
