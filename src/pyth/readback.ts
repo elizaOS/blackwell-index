@@ -1,5 +1,7 @@
 /** Authenticated offchain observation only. No signing, chain transactions, or invented feed bindings. */
 import { z } from "zod";
+import {verifyPythEvmUpdate} from './evm-verifier';
+import {decodeSbxEvmPayload} from './evm-codec';
 import { hash } from "../crypto";
 import { PYTH_SYMBOLS_URL, validatePythManifest, validatePythSymbols, verifyPythReadback,
   type PythFeedBinding, type PythManifest, type PythReadback } from "./index";
@@ -19,6 +21,7 @@ export const pythReadbackConfigSchema=z.object({schemaVersion:z.literal(1),enabl
   maxFeedsPerRequest:positive.max(PYTH_READBACK_LIMITS.feedsPerRequest).default(100),
   maxEnvelopeAgeMs:positive.max(86400000).default(30000),maxConfidenceBps:natural.max(10000),maxPriceDeviationBps:natural.max(10000),
   quoteCurrency:z.string().regex(/^[A-Z]{3}$/).default("USD"),
+  signedEvm:z.object({network:z.enum(['base','base-sepolia']),simulationFrom:z.string().regex(/^0x[0-9a-fA-F]{40}$/).refine(value=>!/^0x0+$/.test(value))}).strict().optional(),
 }).strict();
 export type PythReadbackConfig=z.infer<typeof pythReadbackConfigSchema>;
 const feedStateSchema=z.object({feedId:positive.max(4294967295),feedUpdateTimestampUs:integerText,payloadHash:digest}).strict();
@@ -38,7 +41,7 @@ export interface PythReadbackResult {
   bootstrap:boolean;
   state?:PythReadbackState;
   publisherAttribution:"NOT_ESTABLISHED";
-  signatureVerification:"NOT_PERFORMED";
+  signatureVerification:"NOT_PERFORMED"|"CONTRACT_ACCEPTED_SINGLE_RPC";
   onchainVerification:"NOT_PERFORMED";
 }
 export interface PythReadbackTickOptions {
@@ -208,19 +211,34 @@ export async function readbackTick(options:PythReadbackTickOptions,dependencies:
     for(let offset=0;offset<manifest.bindings.length;offset+=config.maxFeedsPerRequest) {
       const batch=manifest.bindings.slice(offset,offset+config.maxFeedsPerRequest),ids=new Set(batch.map(binding=>binding.pythFeedId));
       const raw=await requestJson(PYTH_LATEST_PRICE_URL,{method:"POST",headers:{authorization:`Bearer ${token}`,"content-type":"application/json"},body:JSON.stringify({
-        priceFeedIds:[...ids],properties:["price","confidence","exponent","publisherCount","feedUpdateTimestamp","marketSession"],
-        formats:[],parsed:true,channel:config.channel,
+        priceFeedIds:[...ids],properties:["price","confidence","exponent","publisherCount","feedUpdateTimestamp",...(config.signedEvm?[]:["marketSession"])],
+        formats:config.signedEvm?["evm"]:[],parsed:!config.signedEvm,channel:config.channel,...(config.signedEvm?{jsonBinaryEncoding:'hex'}:{}),
       })},PYTH_READBACK_LIMITS.responseBytes,timeout(),now,request,options.signal,budget);
+      let signedPayload:unknown;
+      if(config.signedEvm) {
+        const wire=raw&&typeof raw==='object'&&!Array.isArray(raw)?(raw as {evm?:unknown}).evm:undefined;
+        if(!wire||typeof wire!=='object'||Array.isArray(wire)||(wire as {encoding?:unknown}).encoding!=='hex')fail('SIGNED_PAYLOAD_MISSING');
+        const controller=new AbortController(),abort=()=>controller.abort();options.signal?.addEventListener('abort',abort,{once:true});
+        const timer=setTimeout(abort,timeout());
+        try {
+          if(options.signal?.aborted)fail('ABORTED');
+          const verified=await verifyPythEvmUpdate({update:(wire as {data?:unknown}).data,...config.signedEvm,signal:controller.signal},{fetch:request,now,requestTimeoutMs:Math.min(config.requestTimeoutMs,5000)});
+          if(verified.status!=='CONTRACT_ACCEPTED'||!verified.payloadHex)fail('SIGNED_VERIFICATION_FAILED');
+          const decoded=decodeSbxEvmPayload(verified.payloadHex);
+          if(decoded.channel!==config.channel)fail('CHANNEL_MISMATCH');
+          signedPayload={timestampUs:String(decoded.timestampUs),priceFeeds:decoded.feeds.map(feed=>({priceFeedId:feed.priceFeedId,price:String(feed.price),confidence:String(feed.confidence),exponent:feed.exponent,publisherCount:feed.publisherCount,feedUpdateTimestamp:String(feed.feedUpdateTimestampUs)}))};
+        } finally {clearTimeout(timer);options.signal?.removeEventListener('abort',abort);controller.abort();}
+      }
       const completedAt=clock(now);if(completedAt<checkedAt)fail("CLOCK_ROLLBACK");checkedAt=completedAt;
       if(manifest.approval.expiresAt<=checkedAt)fail("APPROVAL_EXPIRED");
       if(!raw||typeof raw!=="object"||Array.isArray(raw))fail("RESPONSE_INVALID");
-      const payload=(raw as {parsed?:unknown}).parsed;
+      const payload=config.signedEvm?signedPayload:(raw as {parsed?:unknown}).parsed;
       if(!payload||typeof payload!=="object"||Array.isArray(payload))fail("PARSED_PAYLOAD_MISSING");
       const {timestampUs,priceFeeds}=payload as {timestampUs?:unknown;priceFeeds?:unknown};
       const envelope=BigInt(unsigned(timestampUs)),nowUs=BigInt(checkedAt)*1000n;
       if(envelope===0n||envelope>nowUs||nowUs-envelope>BigInt(config.maxEnvelopeAgeMs)*1000n)fail("ENVELOPE_CLOCK_INVALID");
       envelopes.push(envelope);
-      if(!Array.isArray(priceFeeds)||priceFeeds.length>batch.length)fail("RESPONSE_FEED_SET_INVALID");
+      if(!Array.isArray(priceFeeds)||priceFeeds.length>batch.length||config.signedEvm&&priceFeeds.length!==batch.length)fail("RESPONSE_FEED_SET_INVALID");
       for(const value of priceFeeds) {
         const id=value&&typeof value==="object"?(value as {priceFeedId?:unknown}).priceFeedId:undefined;
         if(typeof id!=="number"||!ids.has(id)||feeds.has(id))fail("RESPONSE_FEED_SET_INVALID");feeds.set(id,{value,envelope});
@@ -235,6 +253,10 @@ export async function readbackTick(options:PythReadbackTickOptions,dependencies:
       catch(error){out.feeds.push({feedId:binding.pythFeedId,status:error instanceof ReadbackFailure?error.code:"FEED_INVALID"});}
     }
     const degraded=out.feeds.some(feed=>feed.status!=="ADVANCED"&&feed.status!=="UNCHANGED");
+    // Signed acceptance is atomic across every requested feed and batch. Failure
+    // persists only backoff metadata through the catch path, never partial marks.
+    if(config.signedEvm&&degraded)fail('SIGNED_POLICY_FAILED');
+    if(config.signedEvm)out.signatureVerification='CONTRACT_ACCEPTED_SINGLE_RPC';
     out.status=degraded?"DEGRADED":out.feeds.some(feed=>feed.status==="ADVANCED")?"UPSTREAM_OBSERVED":"UNCHANGED";
     const next:PythReadbackState={schemaVersion:1,scopeHash,updatedAt:checkedAt,nextAttemptAt:checkedAt+config.pollIntervalMs,
       consecutiveFailures:degraded?Math.min((state?.consecutiveFailures??0)+1,16):0,feeds:[...previous.values()].sort((a,b)=>a.feedId-b.feedId)};

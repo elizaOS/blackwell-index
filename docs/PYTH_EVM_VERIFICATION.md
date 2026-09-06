@@ -1,6 +1,10 @@
 # Signed EVM verification
 
-The internal `verifyPythEvmUpdate` adapter verifies an EVM-format Pyth Pro update through the reviewed Base or Base Sepolia contract. It is not yet connected to the SBX readback command or public routes.
+The internal `verifyPythEvmUpdate` adapter verifies an EVM-format Pyth Pro update through the reviewed Base or Base Sepolia contract. The readback configuration can opt into this path with `signedEvm`, containing `network` (`base` or `base-sepolia`) and an explicit `simulationFrom` address. Public routes are unchanged and supplied configurations do not enable it.
+
+The existing readback command continues to require an approved manifest, current catalog bindings, locally reproduced expectations and a private state database. Signed mode requests EVM bytes only, ignores adjacent unsigned JSON, verifies every batch, then checks all prices at the final clock before persistence. A failed batch or policy check retains the previous accepted feed timestamps. Changing between unsigned and signed mode changes the state scope and requires explicit operator review; never delete an existing state database to bypass that check.
+
+`CONTRACT_ACCEPTED_SINGLE_RPC` in a successful readback report means the contract checks and feed policies passed before persistence completed. It does not mean a transaction was submitted, that independent RPCs agreed, or that our publisher contributed. A consumer key alone cannot enable the approval-gated workflow.
 
 ## Current behavior
 
@@ -23,11 +27,11 @@ Unit tests use isolated wire and RPC fixtures. They test decoding and failure ha
 ## Remaining integration
 
 1. Wire the shared readback catalog and binding checks into the signed orchestrator. The pure batch checker now reuses feed policy, but does not itself authenticate bytes or approve a manifest. Require actual approved numeric SBX IDs, symbols, exponents, channels, quote currency and minimum publisher counts.
-2. Fetch signed updates with the existing bounded authenticated transport. Verify every batch and require the complete expected feed set.
-3. Apply the existing source/price freshness, exact mantissa, confidence, expected-print and replay checks to contract-returned bytes only. Recheck all batches at completion and revalidate approval expiry.
+2. Extend verification coverage for the integrated signed transport, including long multi-batch runs and changes during verification. The implementation now verifies every batch and requires the complete expected feed set.
+3. Independently review the source/price freshness, exact mantissa, confidence, expected-print and replay checks applied to contract-returned bytes. They now run at completion, including approval-expiry checks.
 4. Reproduce expected prints from the local journal. Do not trust command-line prices or unsigned adjacent JSON as expected SBX evidence.
 5. Preserve atomic acceptance and existing private recovery state. A later failed batch must not advance earlier accepted timestamps.
-6. Add official-contract integration tests and an operator-facing command, then run full release verification. Keep production activation separate from merging software.
+6. Add automated official-contract integration tests and complete full release verification of the existing command's signed mode. Keep production activation separate from merging software.
 
 Publisher admission, source rights, independent operators, assigned feeds and genuine qualification history remain launch prerequisites. A consumer trial key does not satisfy them.
 
