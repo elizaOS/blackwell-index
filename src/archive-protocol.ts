@@ -28,12 +28,15 @@ const checkpointId=z.string().uuid(),tableCode=natural.max(HOSTED_TABLES.length-
 const keySchema=z.tuple([z.string().max(128),natural]);
 const counts=z.array(natural).length(HOSTED_TABLES.length);
 const signature=z.string().length(88);
-const sourceSchema=z.object({nodeId:digest,publicKey:z.string().max(100),nodeName:z.enum(["primary","secondary"]),operatorGroup:z.string().min(1).max(128),release:z.string().regex(/^[a-f0-9]{40}$/)}).strict();
+const sourceSchema=z.object({nodeId:digest,publicKey:z.string().max(100),nodeName:z.enum(["primary","secondary","local"]),operatorGroup:z.string().min(1).max(128),release:z.string().regex(/^[a-f0-9]{40}$/)}).strict();
 export const archiveCursorSchema=z.object({table:natural.max(HOSTED_TABLES.length),position:natural,offset:natural.max(ARCHIVE_LIMITS.recordBytes-1)}).strict();
 export type ArchiveCursor=z.infer<typeof archiveCursorSchema>;
 const descriptorPayloadSchema=z.object({format:z.literal(ARCHIVE_FORMAT),checkpointId,createdAt:timestamp,expiresAt:timestamp,source:sourceSchema,
   configuration:z.object({network:z.string().min(1).max(128),intervalMs:positive.min(30000).max(86400000),registryHash:digest,methodologyHash:digest}).strict(),
   cutoff:natural,counts,snapshotHead:z.object({id:positive,hash:digest}).strict().nullable(),
+  // Optional for compatibility with existing hosted V2 archives. The referenced
+  // configuration contains a bounded signed recovery receipt, not nested archives.
+  recoveryProvenanceHash:digest.optional(),
 }).strict();
 const descriptorSchema=z.object({payload:descriptorPayloadSchema,signature}).strict();
 export type ArchiveDescriptor=z.infer<typeof descriptorSchema>;

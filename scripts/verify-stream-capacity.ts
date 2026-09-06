@@ -18,6 +18,7 @@ import { ChunkedJournal } from "../src/chunked-journal";
 import { canonical, hash, signBatch } from "../src/crypto";
 import { calculate } from "../src/engine";
 import type { SqlDriver } from "../src/journal";
+import { backupLocalStreamNode } from "../src/local-backup";
 import { createRecoveryKey, RECOVERY_MARKER } from "../src/recovery";
 import { backupStreamFrames, inspectStreamBackup, restoreStreamNode } from "../src/stream-recovery";
 import { streamingStudy } from "../src/stream-study";
@@ -27,7 +28,7 @@ import { environment, NOW } from "../test/helpers";
 
 const KIND = "SBX_SYNTHETIC_STREAM_CAPACITY_ONLY", INTERVAL = 300_000, FULL_CYCLES = 8929, WIDTH = 64;
 const SYNTHETIC_QUOTES = environment().observations;
-const PHASES = ["build", "export", "inspect", "restore", "study"] as const;
+const PHASES = ["build", "export", "inspect", "restore", "study", "local-backup", "local-restore"] as const;
 type Phase = (typeof PHASES)[number];
 interface Manifest { kind: typeof KIND; cycles: number; width: number; firstAt: number; lastAt: number; identities: NodeIdentity[]; metadata: CheckpointMetadata }
 function check(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(`CAPACITY_${message}`); }
@@ -133,6 +134,31 @@ async function phaseRun(phase: Phase, directory: string) {
     }
     return result;
   }
+  if (phase === "local-backup" || phase === "local-restore") {
+    const root=join(directory,"restored"),identity=json(join(root,"data/node-identity.json")) as NodeIdentity;
+    const localArchive=join(directory,"local.sbx-stream"),localOptions={expectedNodeId:identity.nodeId,expectedRelease:m.metadata.release,operatorGroup:"capacity-local-fixture-only"};
+    // Only this isolated, network-disabled fixture advances the clock to its synthetic last day.
+    const realNow=Date.now;Date.now=()=>m.lastAt+2000;
+    try {
+      const result=phase==="local-backup"?await backupLocalStreamNode(root,join(root,"config/node.local.json"),localArchive,keyPath,localOptions)
+        :await restoreStreamNode(localArchive,keyPath,join(directory,"local-restored"),localOptions);
+      check(result.reproducedSnapshots===m.cycles&&result.observations===m.cycles*WIDTH&&result.counts.captures===m.cycles&&result.counts.reports===m.cycles*3,"LOCAL_RECOVERY_COUNTS");
+      check(result.recoveryProvenance.records===1&&result.recoveryProvenance.linkedRecords===1,"LOCAL_RECOVERY_PROVENANCE");
+      if(phase==="local-restore") {
+        const nextIdentity=json(join(directory,"local-restored/data/node-identity.json")) as NodeIdentity;
+        check(nextIdentity.nodeId!==identity.nodeId&&!m.identities.some(source=>source.nodeId===nextIdentity.nodeId),"LOCAL_RESTORE_REUSED_IDENTITY");
+        check(existsSync(join(directory,"local-restored",RECOVERY_MARKER)),"LOCAL_RESTORE_REVIEW_MARKER_MISSING");
+        const copy=new Database(join(directory,"local-restored/data/node.sqlite"),{readonly:true,strict:true});
+        try {
+          const counters=copy.query("SELECT id,value FROM counters ORDER BY id").all();
+          check(canonical(counters)===canonical(m.identities.map(source=>({id:source.nodeId,value:m.cycles})).sort((a,b)=>a.id.localeCompare(b.id))),"LOCAL_FROZEN_COUNTER_MISMATCH");
+          const original=json(join(directory,"descriptor.json")) as ArchiveDescriptor;
+          check(canonical(copy.query("SELECT id,hash FROM snapshots ORDER BY id DESC LIMIT 1").get())===canonical(original.payload.snapshotHead),"LOCAL_FROZEN_HEAD_MISMATCH");
+        }finally{copy.close();}
+      }
+      return result;
+    }finally{Date.now=realNow;}
+  }
   const restored = join(directory, "restored/data/node.sqlite"), db = new Database(restored, { readonly: true, strict: true });
   try {
     db.exec("PRAGMA query_only=ON; PRAGMA cache_size=-4096; PRAGMA mmap_size=0");
@@ -211,6 +237,8 @@ if (values.phase) {
       check(Number(phases[0]!.result.evidenceBytes) > 128 * 1024 * 1024, "EVIDENCE_CAPACITY_TOO_SMALL");
       check(Number(phases[0]!.result.databaseBytes) > 64 * 1024 * 1024, "DATABASE_CAPACITY_TOO_SMALL");
       check(Number(phases[1]!.result.archiveBytes) > 128 * 1024 * 1024, "ENCRYPTED_ARCHIVE_CAPACITY_TOO_SMALL");
+      check(Number(phases[5]!.result.archiveBytes) > 128 * 1024 * 1024, "LOCAL_ARCHIVE_CAPACITY_TOO_SMALL");
+      check(Number(phases[6]!.result.databaseBytes) > 64 * 1024 * 1024, "LOCAL_RESTORE_CAPACITY_TOO_SMALL");
     }
     const summary = { kind: KIND, fullThirtyOneDayCapacityPassed: full, cycles, capturedObservations: cycles * WIDTH,
       calendarDays: (cycles - 1) * INTERVAL / 86_400_000, memoryLimitBytes: memoryLimitMiB * 1024 * 1024,

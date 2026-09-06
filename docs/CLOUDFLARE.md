@@ -96,7 +96,7 @@ An ordinary code deployment retains these objects. Deleting a namespace, changin
 
 The [hosted recovery tool](HOSTED_RECOVERY.md) uses an authenticated private service binding, not a public HTTP export route. It obtains a signed checkpoint of allowlisted journal tables, verifies exact evidence chunks and capture-cycle reconstruction locally, and creates an encrypted backup through the [recovery commands](RECOVERY.md). The source's private signer and provider credentials are excluded. Restoration creates a new, disabled self-hosted identity; it does not replace the running Durable Object.
 
-The signed logical export is capped at 8 MiB. Tool implementation is not evidence of a completed live recovery drill. Verify the deployed revision, then assign offsite storage, separate key custody, retention, alerts and host-loss recovery ownership. Larger journals require a separately reviewed streaming archive; do not delete retained evidence to fit the cap.
+The original V1 signed logical export is capped at 8 MiB. [V2 streaming recovery](STREAMING_RECOVERY.md) provides bounded blocks for larger journals; see its [release acceptance](HOSTED_ACCEPTANCE_2026-09-06.md) for the completed workload and live drills. Verify the actual deployed revision, then assign offsite storage, separate key custody, retention, alerts and host-loss recovery ownership. Neither format authorizes deleting retained evidence to fit a cap.
 
 After verified import or restore, the [operating study](OPERATING_STUDY.md) can analyze the local private journal without requesting prices or publishing results. Its 30-day qualification remains `NOT_ESTABLISHED`; source coverage and actual elapsed operation need independent review.
 

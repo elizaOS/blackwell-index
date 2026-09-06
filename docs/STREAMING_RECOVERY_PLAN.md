@@ -1,6 +1,6 @@
 # Streaming recovery implementation plan
 
-Status: functional release implemented, deployed and verified for the documented three-operator 31-day workload and maximum-candidate runtime fixture. Both live journals passed encrypted inspection and restore. The account-specific capacity, maximum-operator retention, local re-backup and offsite operating requirements below remain open. See [operator instructions](STREAMING_RECOVERY.md) and the exact [acceptance record](HOSTED_ACCEPTANCE_2026-09-06.md). This plan does not change publication eligibility or authorize a paid service.
+Status: hosted release implemented, deployed and verified for the documented three-operator 31-day workload and maximum-candidate runtime fixture. Both live journals passed encrypted inspection and restore. Local re-backup is implemented through `backup-stream`; verify its exact revision before use. The capacity harness now also checks local re-backup and a second restore in separate memory-measured processes. Account-specific capacity, maximum-operator retention and offsite operating requirements remain open. See [operator instructions](STREAMING_RECOVERY.md) and the exact [acceptance record](HOSTED_ACCEPTANCE_2026-09-06.md). This plan does not change publication eligibility or authorize a paid service.
 
 ## Decision
 
@@ -10,9 +10,9 @@ Do not increase the current 8 MiB export, 64 MiB database, or 128 MiB encrypted 
 
 The first complete implementation must pass a 31-day capacity drill, including encrypted export, independent inspection, restore, historical reproduction and coverage analysis. A successful block download alone is not completion.
 
-## Current constraints
+## Original V1 constraints
 
-The current exporter serializes all rows into one signed object. The helper buffers that object. The importer then embeds the complete signed object in the restored database, and `recovery.ts` reads, base64-encodes, encrypts and serializes a complete SQLite copy. Each stage therefore grows with total history.
+The V1 exporter serializes all rows into one signed object. Its helper buffers that object. Its importer then embeds the complete signed object in the restored database, and `recovery.ts` reads, base64-encodes, encrypts and serializes a complete SQLite copy. These historical design constraints explain the separate V2 implementation; they do not describe the current streaming path.
 
 Current journal mutations are:
 
@@ -151,7 +151,9 @@ No new R2 account is required for an operator to download an encrypted file thro
 
 Do not deploy an exporter-only change that merely moves the failure to the local 64 MiB recovery cap. Phases 1–4 form the minimum functional release; phase 5 is its acceptance gate.
 
-## Decisions still required before implementation
+## Original implementation decisions
+
+The released code records the membership, framing and storage choices below. Account-specific allowances and offsite ownership remain unresolved operating requirements.
 
 - Confirm the account's storage/CPU limits and the measured 31-day capacity target, including admitted-operator count, changing evidence and reserved live-write headroom.
 - Select and test the transactional membership mechanism and legacy bootstrap. Database-trigger support is not assumed; application-level registration must cover every listed write path.

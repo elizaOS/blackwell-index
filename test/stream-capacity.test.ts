@@ -25,10 +25,12 @@ test("checkpoint/export/inspection/restore/study run in separate memory-measured
   expect(result.kind).toBe("SBX_SYNTHETIC_STREAM_CAPACITY_ONLY"); expect(result.fullThirtyOneDayCapacityPassed).toBe(false);
   expect(result.capturedObservations).toBe(192); expect(result.retainedDirectory).toBeNull();
   expect(result.memoryMeasurement).toBe("FRESH_PROCESS_OS_PEAK_RSS");
-  expect(result.phases.map(phase => phase.phase)).toEqual(["build", "export", "inspect", "restore", "study"]);
+  expect(result.phases.map(phase => phase.phase)).toEqual(["build", "export", "inspect", "restore", "study", "local-backup", "local-restore"]);
   expect(result.phases.every(phase => phase.peakRssBytes > 0 && phase.peakRssBytes <= 384 * 1024 * 1024)).toBe(true);
   expect(result.phases[1]!.result).toMatchObject({ sourceVerified: true, sourceCapturesAfterBegin: 4, checkpointCaptures: 3, counterIncrementsFromCollectionOnly: true });
   expect(result.phases[2]!.result).toMatchObject({ reproducedSnapshots: 3, observations: 192 });
   expect(result.phases[3]!.result).toMatchObject({ status: "RECOVERY_REVIEW_REQUIRED", reproducedSnapshots: 3, observations: 192 });
   expect(result.phases[4]!.result).toMatchObject({ complete: true, independentReproducedSnapshots: 3, frozenCountersVerified: true, frozenSnapshotHeadVerified: true });
+  expect(result.phases[5]!.result).toMatchObject({contentInspection:"VERIFIED",reproducedSnapshots:3,observations:192,recoveryProvenance:{records:1,linkedRecords:1}});
+  expect(result.phases[6]!.result).toMatchObject({status:"RECOVERY_REVIEW_REQUIRED",reproducedSnapshots:3,observations:192});
 }, 180_000);

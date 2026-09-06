@@ -1,6 +1,6 @@
 # Streaming recovery
 
-V2 exports a consistent hosted journal in bounded blocks, encrypts it locally and restores a new, disabled node. It does not publish prices, copy signing keys, prune source records or provide offsite custody. See the [acceptance record](HOSTED_ACCEPTANCE_2026-09-06.md) for the exact revisions and workloads actually tested. The [design plan](STREAMING_RECOVERY_PLAN.md) records the release gates; implementation alone is not evidence that they passed.
+V2 exports a consistent hosted journal or a recovered local journal in bounded blocks, encrypts it locally and restores a new, disabled node. It does not publish prices, copy signing keys, prune source records or provide offsite custody. See the [acceptance record](HOSTED_ACCEPTANCE_2026-09-06.md) for the exact revisions and workloads actually tested. The [design plan](STREAMING_RECOVERY_PLAN.md) records the release gates; implementation alone is not evidence that they passed.
 
 ## Operator procedure
 
@@ -36,7 +36,31 @@ Local encryption uses Node's HKDF-SHA256 and AES-256-GCM with a fresh per-archiv
 
 Restore imports only allowlisted typed rows, never supplied SQL. It retains physical evidence chunks and capture batches, verifies evidence hashes and receipt times, report signatures, counters, quarantine/proof linkage, configuration hashes and the snapshot chain, and reproduces every snapshot with its archived inputs and configuration. Batches are checked against unique collection markers, not treated as extra cycles. Original descriptor, seal and encrypted-archive digest remain as provenance; the entire archive is not duplicated inside the database.
 
-The source signing key is not recovered; its public identity remains in provenance. Restore creates a fresh signer, disables collectors, peers and Pyth, binds to loopback and writes the review marker that blocks `run` and `collect`. Local V1 backup is not supported for chunked restored journals. Before operating a restored node, establish and test its subsequent backup path; retaining the original archive does not protect new observations. Restoration is not authorization to remove the review marker.
+The source signing key is not recovered; its public identity remains in provenance. Restore creates a fresh signer, disables collectors, peers and Pyth, binds to loopback and writes the review marker that blocks `run` and `collect`. Local V1 backup is not supported for chunked restored journals; use `backup-stream` below. Before operating a restored node, test its subsequent backup path and arrange offsite custody; retaining the original archive does not protect new observations. Restoration is not authorization to remove the review marker.
+
+## Back up a recovered local node
+
+Run this from the verified code checkout, not from the recovery directory (Bun can automatically load a working-directory `.env`). Use the recovered node's **current** ID, not its predecessor's ID. Independently verify the full SHA of the local build and supply an operator-group label; neither value grants admission to the oracle network.
+
+```sh
+bun src/cli.ts backup-stream --dir /absolute/path/to/recovered-node \
+  --operator-group YOUR_OPERATOR_GROUP \
+  --expected-node-id CURRENT_LOCAL_NODE_ID --expected-release VERIFIED_LOCAL_BUILD_SHA \
+  --key-file /absolute/private/path/recovery.key \
+  --output /absolute/private/path/local-v2.sbx-backup
+bun src/cli.ts backup-stream-inspect \
+  --expected-node-id CURRENT_LOCAL_NODE_ID --expected-release VERIFIED_LOCAL_BUILD_SHA \
+  --key-file /absolute/private/path/recovery.key \
+  --input /absolute/private/path/local-v2.sbx-backup
+```
+
+This path currently accepts the chunked representation produced by `restore-stream`. Ordinary unconverted self-hosted journals retain their V1 commands and limits; `backup-stream` rejects them rather than silently converting storage. Upgrade the reader before using local V2 archives: older V2 readers accept hosted descriptors only. Existing hosted archives and V1 archives remain readable with the new tools.
+
+The local source opens read-only. SQLite `VACUUM INTO` creates a consistent private copy including committed WAL pages; normal collection may continue. Checkpoint setup, configuration additions and metadata conversion occur only on that copy. No signing counter is allocated. Keep identity and configuration files unchanged during the operation: before/after comparisons detect changes to parsed settings, but this is not an atomic snapshot across database and filesystem or proof of the running process's in-memory configuration. The local build SHA is a signed **operator assertion**, not independently verified build or deployment attestation.
+
+The exporter checks the private copy before encryption, then independently imports and verifies the actual encrypted output. Only a successful return with `contentInspection: VERIFIED` is acceptance. It does not remove the recovery review marker, configure collectors or enable publication.
+
+Prior descriptor, seal, ciphertext digest and byte count become a hash-addressed configuration record linked by the new signed descriptor. All older records remain in the archive; references do not nest whole archives. Inspection verifies receipt signatures, hashes and ancestry (maximum 1,024 records, 256 generations, 48 KiB per receipt). `ciphertextVerification: NOT_PERFORMED` means prior ciphertext was not supplied or recomputed; retain those original archives and keys separately for independent custody verification. Receipts alone do not prove row-by-row equivalence with earlier archives. The current archive is fully authenticated and its retained journal is inspected.
 
 ## Resource limits and failure behavior
 
@@ -61,6 +85,6 @@ Local exporter/inspection RSS and Cloudflare isolate memory are different measur
 
 Bounded RAM does not mean small disk requirements. The initial three-operator 31-day fixture produced an approximately 817 MB database and 1.2 GB encrypted archive. Inspection materializes another private database; restore temporarily needs both that database and the destination copy. Allow several gigabytes of local free space. The 64 MiB reserve is a per-write failure threshold, not an upfront estimate of the entire operation.
 
-Normal completion, verification failure and graceful cancellation clean owned private materialization directories. A host crash or forced process termination can leave protected scratch files; use encrypted disks and inspect only exact owned paths. A failed restore may leave its new, disabled destination and review marker for operator review. Neither existing destinations nor completed archives are overwritten.
+Normal completion, verification failure and graceful cancellation clean owned private materialization directories. The initial local SQLite copy is synchronous: a JavaScript abort or signal is processed after that copy returns. Disk capacity is checked before and after the copy, not continuously during SQLite's operation; reserve room for the source copy, checkpoint staging, encrypted archive and inspection database. A host crash or forced process termination can leave protected scratch files; use encrypted disks and inspect only exact owned paths. A failed restore may leave its new, disabled destination and review marker for operator review. Neither existing destinations nor completed archives are overwritten.
 
 Offsite storage, separate key custody, retention, paging, account limits, a host-loss exercise and the restored node's ongoing backup program remain operational requirements. This release does not satisfy source rights, independent-operator quorum, approved weights, Pyth admission or genuine thirty-day market validation.

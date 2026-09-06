@@ -17,6 +17,7 @@ import { Database } from "bun:sqlite";
 import { operatingStudy } from "./study";
 import { streamingStudy } from "./stream-study";
 import { backupStreamFrames, inspectStreamBackup, restoreStreamNode } from "./stream-recovery";
+import { backupLocalStreamNode } from "./local-backup";
 import { ARCHIVE_LIMITS } from "./archive-protocol";
 import type { SqlDriver } from "./journal";
 import type { NodeIdentity, Observation, SignedBatch } from "./types";
@@ -26,10 +27,10 @@ function cliArguments() {
   config:{type:"string",default:"config/node.local.json"},dir:{type:"string",default:"."},providers:{type:"string"},
   peers:{type:"string"},port:{type:"string"},host:{type:"string"},"allow-loopback":{type:"boolean",default:false},at:{type:"string"},from:{type:"string"},sequence:{type:"string"},
   output:{type:"string"},input:{type:"string"},"key-file":{type:"string"},target:{type:"string"},stream:{type:"boolean",default:false},
-  "expected-node-id":{type:"string"},"expected-release":{type:"string"},"max-archive-bytes":{type:"string"},
+  "expected-node-id":{type:"string"},"expected-release":{type:"string"},"max-archive-bytes":{type:"string"},"operator-group":{type:"string"},
 }});}catch(error) {
     // Argument-parser diagnostics can echo untrusted flags and values before main().
-    if(process.argv.slice(2).some(value=>["import-hosted-backup","import-stream-backup","backup-stream-inspect","restore-stream"].includes(value))) {process.stderr.write("HOSTED_BACKUP_IMPORT_FAILED\n");process.exit(1);}
+    if(process.argv.slice(2).some(value=>["import-hosted-backup","import-stream-backup","backup-stream","backup-stream-inspect","restore-stream"].includes(value))) {process.stderr.write("HOSTED_BACKUP_IMPORT_FAILED\n");process.exit(1);}
     throw error;
   }
 }
@@ -91,7 +92,7 @@ async function readSecret():Promise<string> {
   });
 }
 async function main():Promise<void> {
-  if(["import-stream-backup","backup-stream-inspect","restore-stream"].includes(command)) {
+  if(["import-stream-backup","backup-stream","backup-stream-inspect","restore-stream"].includes(command)) {
     const controller=new AbortController();let reading=command==="import-stream-backup";
     const interrupt=()=>{controller.abort();if(reading)process.stdin.destroy(new Error("HOSTED_IMPORT_INTERRUPTED"));};
     process.on("SIGINT",interrupt);process.on("SIGTERM",interrupt);
@@ -100,7 +101,10 @@ async function main():Promise<void> {
       const maxArchiveBytes=studyTime(values["max-archive-bytes"]);
       const options={signal:controller.signal,expectedNodeId:values["expected-node-id"]!,expectedRelease:values["expected-release"]!,...(maxArchiveBytes===undefined?{}:{maxArchiveBytes})};
       const key=resolve(root,values["key-file"]);
-      if(command==="import-stream-backup") {
+      if(command==="backup-stream") {
+        if(!values.output||!values["operator-group"])throw new Error("LOCAL_STREAM_ARGUMENTS_REQUIRED");
+        output(await backupLocalStreamNode(root,configPath,resolve(root,values.output),key,{...options,operatorGroup:values["operator-group"]}));
+      } else if(command==="import-stream-backup") {
         if(!values.output)throw new Error("STREAM_OUTPUT_REQUIRED");
         async function* frames():AsyncGenerator<Uint8Array> {
           // Each stdin byte is copied once into a fixed bounded frame. Repeated
@@ -233,7 +237,7 @@ async function main():Promise<void> {
   }
   if(command==="providers"){output(collectorCatalog);return;}
   if(!["run","collect","status","replay","reproduce"].includes(command)) {
-    process.stdout.write("Blackwell Index node\n\nsetup [--dir PATH] [--providers oracle-public,azure-retail] [--peers https://NODE]\ncredentials COLLECTOR [ENV_NAME]   save one API key locally using hidden terminal input\nproviders              list supported adapters and key requirements\ncollect                collect real data once and sync peers\nrun                    serve API and collect continuously\nstatus                 inspect local counts, identity and readiness\nreplay --at EPOCH_MS    explore observations known at a historical time\nreproduce --sequence N reproduce an archived snapshot with its exact inputs and configuration\nstudy [--stream] [--at EPOCH_MS] [--from EPOCH_MS] [--output PRIVATE_JSON]   inspect retained captures; stdout contains counts only\nbackup-keygen --output KEY_FILE\nbackup --key-file KEY_FILE --output BUNDLE_FILE\nbackup-inspect --key-file KEY_FILE --input BUNDLE_FILE\nrestore --key-file KEY_FILE --input BUNDLE_FILE --target NEW_DIRECTORY\nimport-hosted-backup --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --output BUNDLE_FILE   consume signed private export from stdin\nimport-stream-backup --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --output BUNDLE_FILE   consume private V2 source frames from stdin\nbackup-stream-inspect --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --input BUNDLE_FILE\nrestore-stream --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --input BUNDLE_FILE --target NEW_DIRECTORY\n\nStreaming recovery accepts --max-archive-bytes. study --stream produces bounded private aggregates without point arrays.\nAll commands accept --dir and --config. No keys or synthetic prices are bundled. Recovery creates a new identity and blocks run/collect pending review.\n");return;
+    process.stdout.write("Blackwell Index node\n\nsetup [--dir PATH] [--providers oracle-public,azure-retail] [--peers https://NODE]\ncredentials COLLECTOR [ENV_NAME]   save one API key locally using hidden terminal input\nproviders              list supported adapters and key requirements\ncollect                collect real data once and sync peers\nrun                    serve API and collect continuously\nstatus                 inspect local counts, identity and readiness\nreplay --at EPOCH_MS    explore observations known at a historical time\nreproduce --sequence N reproduce an archived snapshot with its exact inputs and configuration\nstudy [--stream] [--at EPOCH_MS] [--from EPOCH_MS] [--output PRIVATE_JSON]   inspect retained captures; stdout contains counts only\nbackup-keygen --output KEY_FILE\nbackup --key-file KEY_FILE --output BUNDLE_FILE\nbackup-inspect --key-file KEY_FILE --input BUNDLE_FILE\nrestore --key-file KEY_FILE --input BUNDLE_FILE --target NEW_DIRECTORY\nimport-hosted-backup --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --output BUNDLE_FILE   consume signed private export from stdin\nimport-stream-backup --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --output BUNDLE_FILE   consume private V2 source frames from stdin\nbackup-stream --operator-group GROUP --expected-node-id NODE_ID --expected-release LOCAL_BUILD_SHA --key-file KEY_FILE --output BUNDLE_FILE   back up a recovered local V2 journal\nbackup-stream-inspect --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --input BUNDLE_FILE\nrestore-stream --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --input BUNDLE_FILE --target NEW_DIRECTORY\n\nStreaming recovery accepts --max-archive-bytes. study --stream produces bounded private aggregates without point arrays.\nAll commands accept --dir and --config. No keys or synthetic prices are bundled. Recovery creates a new identity and blocks run/collect pending review.\n");return;
   }
   const {config,node,store}=load();
   if(command==="status") {output({nodeId:node.options.identity.nodeId,counts:store.counts(),coverage:store.captureCounts(),snapshot:node.snapshot(),history:store.verifyHistory()});store.close();return;}
@@ -264,4 +268,4 @@ async function main():Promise<void> {
   process.on("SIGTERM",stop);process.on("SIGINT",stop);
   await cycle();
 }
-main().catch(e=>{process.stderr.write(`${["import-hosted-backup","import-stream-backup","backup-stream-inspect","restore-stream"].includes(command)?"HOSTED_BACKUP_IMPORT_FAILED":e instanceof Error?e.message:"Command failed"}\n`);process.exitCode=1;});
+main().catch(e=>{process.stderr.write(`${["import-hosted-backup","import-stream-backup","backup-stream","backup-stream-inspect","restore-stream"].includes(command)?"HOSTED_BACKUP_IMPORT_FAILED":e instanceof Error?e.message:"Command failed"}\n`);process.exitCode=1;});

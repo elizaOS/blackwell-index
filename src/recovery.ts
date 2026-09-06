@@ -140,7 +140,7 @@ export function backupNode(root:string,configPath:string,outputPath:string,keyPa
     const source=new Database(resolve(root,configuration.databasePath),{readonly:true,strict:true});
     try {
       source.exec("PRAGMA busy_timeout=5000");
-      if(source.query("SELECT name FROM sqlite_master WHERE type='table' AND name='local_journal_storage'").get())throw new Error("Chunked journals require the V2 streaming backup path; local re-backup tooling must be implemented and reviewed before production use");
+      if(source.query("SELECT name FROM sqlite_master WHERE type='table' AND name='local_journal_storage'").get())throw new Error("Chunked journals require the V2 streaming backup path: use backup-stream and independently inspect the result");
       const pages=(source.query("PRAGMA page_count").get() as {page_count:number}).page_count;
       const pageSize=(source.query("PRAGMA page_size").get() as {page_size:number}).page_size;
       if(pages*pageSize>MAX_DATABASE_BYTES)throw new Error("Recovery database exceeds the 64 MiB bundle limit; use a reviewed streaming backup procedure");

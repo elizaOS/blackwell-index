@@ -12,6 +12,7 @@ import { parseConfig, type NodeConfig } from "./config";
 import { canonical, generateIdentity, hash, verifyBatch } from "./crypto";
 import { calculate } from "./engine";
 import { JOURNAL_LIMITS, validateEquivocationProof, type SqlDriver } from "./journal";
+import { verifyRecoveryProvenance } from "./local-backup-metadata";
 import { RECOVERY_MARKER } from "./recovery";
 import { readStreamContainer, writeStreamContainer, type StreamContainerOptions, type StreamContainerSummary } from "./stream-container";
 import type { SignedBatch } from "./types";
@@ -166,7 +167,8 @@ export async function verifyStreamDatabase(journal:ChunkedJournal,descriptor:Arc
   }
   options.signal?.throwIfAborted();
   return {history:{valid:true as const,count:reproducedSnapshots},counts:journal.counts(),coverage:journal.captureCounts(),reproducedSnapshots,
-    evidenceBytes,observations:observationCount,quarantineProofs:{verified:verifiedProofs,unavailable,requiresReview:unavailable>0},registry,methodology};
+    evidenceBytes,observations:observationCount,quarantineProofs:{verified:verifiedProofs,unavailable,requiresReview:unavailable>0},
+    recoveryProvenance:verifyRecoveryProvenance(journal,descriptor),registry,methodology};
 }
 
 async function stage(inputPath:string,keyPath:string,options:StreamRecoveryOptions) {
@@ -316,8 +318,8 @@ export async function restoreStreamNode(inputPath:string,keyPath:string,destinat
     privateJson(join(destination,RECOVERY_MARKER),{status:"RECOVERY_REVIEW_REQUIRED",sourceNodeId,newNodeId:identity.nodeId,restoredAt:Date.now(),
       archiveSha256:summary.archiveSha256,requirements:["Review source history and retain the encrypted source archive and its separately protected key.",
         "Never resume the previous signing identity from this historical counter; explicitly reconcile or revoke the previous signer.",
-        "Implement and verify local V2 re-backup tooling before enabling this recovered node for production. Legacy V1 backup does not support chunked journals.",
-        "Review source rights, independent-operator admission, credentials, peers and Pyth setup. All remain disabled.",
+        "Run and independently inspect a local backup-stream archive, then establish offsite custody and restore tests before production activation. Legacy V1 backup does not support chunked journals.",
+        "Review source rights, independent-operator admission, credentials, peers and Pyth setup. Collectors, peers and Pyth remain disabled.",
         "Remove this marker only after documented operator review."]});
     copyFileSync(data.path,join(destination,configuration.databasePath),constants.COPYFILE_EXCL);chmodSync(join(destination,configuration.databasePath),0o600);
     const databaseFd=openSync(join(destination,configuration.databasePath),"r");try{fsyncSync(databaseFd);}finally{closeSync(databaseFd);}
