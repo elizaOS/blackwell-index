@@ -125,7 +125,8 @@ async function cli(f:Fixture,args:string[]=[],preload?:string,scratch?:string) {
   const child=Bun.spawn([process.execPath,...(preload?["--preload",preload]:[]),resolve("src/cli.ts"),"backup-stream","--dir",f.root,
     "--operator-group",OPERATOR_GROUP,"--expected-node-id",f.identity.nodeId,"--expected-release",LOCAL_RELEASE,
     "--key-file",f.keyPath,"--output",f.output,...args],{cwd:resolve("."),stdout:"pipe",stderr:"pipe",
-      ...(scratch?{env:{...process.env,TMPDIR:scratch,TMP:scratch,TEMP:scratch}}:{})});
+      // Keep Bun's transpiler cache out of the directory whose application cleanup is under test.
+      ...(scratch?{env:{...process.env,BUN_RUNTIME_TRANSPILER_CACHE_PATH:"0",TMPDIR:scratch,TMP:scratch,TEMP:scratch}}:{})});
   const timeout=setTimeout(()=>child.kill("SIGKILL"),15000);
   try {
     const [code,stdout,stderr]=await Promise.all([child.exited,new Response(child.stdout).text(),new Response(child.stderr).text()]);
