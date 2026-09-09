@@ -14,7 +14,7 @@ export async function collectCycle(config: ReturnType<typeof runtimeConfig>, nod
   const sources: {collector:string;status:string;observations:number;errors:number;errorCodes?:string[];schedule?:CollectionSchedule}[] = [];
   for (const collector of createCollectors(config.collectors)) {
     const provider = config.registry.providers.find(p => p.id === collector.provider);
-    if (!provider?.rights.collect || (provider.rights.expiresAt !== null && provider.rights.expiresAt < Date.now())) {
+    if (!provider?.rights.collect || (provider.rights.expiresAt !== null && provider.rights.expiresAt <= Date.now())) {
       sources.push({collector:collector.id,status:"COLLECTION_NOT_APPROVED",observations:0,errors:0});
       continue;
     }

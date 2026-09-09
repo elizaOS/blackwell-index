@@ -22,7 +22,10 @@ export const observationSchema = z.strictObject({
   priceScope: z.enum(["PUBLIC", "ACCOUNT_SPECIFIC"]).optional(), topology: z.enum(["HGX", "NVL72", "UNKNOWN"]).optional(),
   minimumOrderGpuCount: z.number().int().min(1).max(100000).nullable().optional(), sourceRecordId: z.string().min(1).max(300).optional(),
   observedAt: timestamp, priceEffectiveAt: timestamp.nullable(), expiresAt: timestamp.nullable(), sourceUrl, evidenceHash: digest,
-}).refine(o => toMicros(o.price) === toMicros(normalizeInstance(o.instancePrice, o.gpuCount)), "Instance normalization does not match price");
+}).refine(o => {
+  try { return toMicros(o.price) === toMicros(normalizeInstance(o.instancePrice, o.gpuCount)); }
+  catch { return false; }
+}, "Instance normalization does not match price");
 export const signedBatchSchema = z.strictObject({
   payload: z.strictObject({ schemaVersion: z.literal(1), network: id, nodeId: digest,
     publicKey: z.string().regex(/^[A-Za-z0-9+/]{58}==$/).or(z.string().length(60).regex(/^[A-Za-z0-9+/=]+$/)),

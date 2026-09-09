@@ -4,6 +4,9 @@ import { defaultMethodology, defaultRegistry } from "../src/config";
 import { generateIdentity } from "../src/crypto";
 import { OracleNode } from "../src/network";
 import { Store } from "../src/store";
+import { verda } from "../src/collectors/verda";
+import { observationSchema } from "../src/validation";
+import { environment, NOW } from "./helpers";
 
 // Isolated synthetic responses verify the hosted orchestration; no provider calls.
 function interceptFetch(handler: () => Promise<Response>) {
@@ -67,4 +70,34 @@ test("hosted catalog capture remains private without benchmark and redistributio
     expect(snapshot.feeds.every(feed => feed.price === null)).toBe(true);
     expect((await node.handle(new Request("https://node.example/v1/ready"))).status).toBe(503);
   } finally {fetchMock.mockRestore();store.close();}
+});
+
+
+test("hosted collection stops at the exact rights expiry boundary", async () => {
+  const clock = spyOn(Date, "now").mockReturnValue(NOW);
+  const fetchMock = interceptFetch(async () => { throw new Error("Expired source requested"); });
+  const {store, node, config} = setup();
+  config.registry.providers.find(p => p.id === "verda")!.rights.expiresAt = NOW;
+  try {
+    expect((await collectCycle(config, node, store)).sources[0]!.status).toBe("COLLECTION_NOT_APPROVED");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(store.counts().evidence).toBe(0);
+  } finally { fetchMock.mockRestore(); clock.mockRestore(); store.close(); }
+});
+
+test("malformed decimal does not abort valid neighbors or leak hosted diagnostics", async () => {
+  const valid = {...environment().observations[0]!, provider:"verda", source:verda.id, sourceUrl:"https://api.verda.com/v1/instance-types"};
+  const malformed = {...valid, price:"PRIVATE_INVALID_DECIMAL"};
+  expect(() => observationSchema.safeParse(malformed)).not.toThrow();
+  expect(observationSchema.safeParse(malformed).success).toBe(false);
+  const collector = spyOn(verda, "collect").mockResolvedValue({observations:[malformed, valid], errors:["PROVIDER_ERROR: PRIVATE_PROVIDER_DETAIL"]});
+  const {store, node, config} = setup();
+  try {
+    const cycle = await collectCycle(config, node, store);
+    expect(cycle.sources[0]).toMatchObject({status:"DEGRADED", observations:1, errors:2, errorCodes:["PROVIDER_ERROR"]});
+    expect(JSON.stringify(cycle)).not.toContain("PRIVATE_");
+    const capture = store.db.query("SELECT observations, errors FROM captures").get() as {observations:string;errors:string};
+    expect(JSON.parse(capture.observations)).toEqual([valid]);
+    expect(capture.errors).not.toContain("PRIVATE_");
+  } finally { collector.mockRestore(); store.close(); }
 });

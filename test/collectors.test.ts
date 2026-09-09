@@ -133,6 +133,17 @@ describe("authenticated pricing collectors", () => {
     expect(result.observations[0]).toMatchObject({ price: "3.000000", availableGpuCount: 8, sourceRecordId: "host:3:offer:1" });
     expect(result.errors[0]).toContain("UNVERIFIED_TENANCY");
   });
+  test("Vast refuses conflicting duplicate offers regardless of response ordering", async () => {
+    const offer = { id: 1, gpu_name: "B200", rentable: true, rented: false, is_bid: false, verification: "verified", num_gpus: 8, gpu_frac: 1, dph_total: 24, machine_id: 2, host_id: 3, geolocation: "Virginia, US" };
+    const conflicting = { ...offer, dph_total: 32 };
+    for (const offers of [[offer, conflicting], [conflicting, offer]]) {
+      const { ctx, evidence } = context(() => json({ offers }), { VAST_API_KEY: "test" });
+      const result = await collect("vast-offers", ctx);
+      expect(result.observations).toEqual([]);
+      expect(result.errors).toEqual(["AMBIGUOUS_PRICE: Vast repeated an offer ID with conflicting fields"]);
+      expect(evidence).toHaveLength(1);
+    }
+  });
 });
 
 describe("AWS official SDK transport", () => {

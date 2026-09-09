@@ -31,6 +31,8 @@ export interface SqlStatement {
 export interface SqlDriver {
   exec(sql:string):unknown;
   query(sql:string):SqlStatement;
+  /** Drivers with cached native cursors can supply a separately owned statement. */
+  prepare?(sql:string):SqlStatement & { finalize():void };
   transaction<T>(fn:()=>T):()=>T;
   close():void;
 }
@@ -51,7 +53,14 @@ export class Journal {
     // runtime/database handle must not be used to mutate a checkpoint-enabled journal.
     const guard=(forbidden:boolean)=>{if(this.archiveRegistration&&forbidden)throw new Error("ARCHIVE_IMMUTABLE_MUTATION_REJECTED");};
     this.db={exec:sql=>{guard(immutableWrite(sql));return database.exec(sql);},query:sql=>{
-      const forbidden=immutableWrite(sql),statement=database.query(sql);return {run:(...values)=>{guard(forbidden);return statement.run(...values);},get:(...values)=>{guard(forbidden);return statement.get(...values);},all:(...values)=>{guard(forbidden);return statement.all(...values);},iterate:(...values)=>{guard(forbidden);return statement.iterate(...values);}};
+      const forbidden=immutableWrite(sql),statement=database.query(sql);return {run:(...values)=>{guard(forbidden);return statement.run(...values);},get:(...values)=>{guard(forbidden);return statement.get(...values);},all:(...values)=>{guard(forbidden);return statement.all(...values);},iterate:function*(...values){
+        guard(forbidden);
+        if(!database.prepare){yield* statement.iterate(...values);return;}
+        // Bun's cached iterator can resume after a break/throw. Give each scan
+        // its own statement and release it even when the consumer stops early.
+        const cursor=database.prepare(sql);
+        try {yield* cursor.iterate(...values);} finally {cursor.finalize();}
+      }};
     },transaction:fn=>database.transaction(fn),close:()=>database.close()};
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS counters (id TEXT PRIMARY KEY, value INTEGER NOT NULL);

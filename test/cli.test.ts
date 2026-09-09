@@ -423,3 +423,20 @@ describe("CLI subprocess lifecycle (empty-source test configuration; no provider
     expect(status.json<{ counts: Record<string, number> }>().counts).toMatchObject({ evidence: 0, captures: 1, candidates: 1, reports: 0 });
   }, 20_000);
 });
+
+
+test("CLI collection refuses rights expiring exactly now without a provider request", async () => {
+  const directory = freshDirectory();
+  await setup(directory, "verda-public");
+  const config = readJson<NodeConfig>(directory, "config/node.local.json");
+  const registry = readJson<Registry>(directory, config.registryPath);
+  const now = 1788910000000;
+  registry.providers.find(p => p.id === "verda")!.rights.expiresAt = now;
+  writeJson(directory, config.registryPath, registry);
+  const preload = join(directory, "expiry-preload.ts");
+  writeFileSync(preload, `Date.now = () => ${now}; globalThis.fetch = () => { throw new Error("FORBIDDEN_PROVIDER_REQUEST"); };`, {mode:0o600});
+  const result = await commandAt(directory, ["collect"], {preload});
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain("collection permission not configured");
+  expect(result.stdout).not.toContain("collector failed");
+});
