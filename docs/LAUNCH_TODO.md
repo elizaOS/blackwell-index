@@ -87,4 +87,4 @@ Continue research collection while these are unresolved. Do not enable public pr
 
 Supply the legal operator, contact, data provenance, provider permissions, requested symbols, units, exponent, refresh schedule, source-time semantics, constituent methodology, quorum model, expected coverage, failure behavior, test evidence and public publisher key. Request a written decision on benchmark-administrator admission, approved feeds, minimum independent publishers, test/production ingress and fees. Ask how the upgraded Core/Pro API exposes source age and how to obtain independent publisher-attribution evidence.
 
-These are drafted requirements, not a sent application or a claim of acceptance. Contacting external parties requires the user's communication authorization.
+The technical questions above remain unresolved. A publisher application was submitted September 6 under Eliza Research, with confirmation retained privately; acceptance and feed assignments remain unconfirmed. Do not confuse this checklist or the separate unsent market-operator discussion packet with that submitted application. See [application status](PYTH.md#application-status--september-10).

@@ -2,6 +2,12 @@
 
 Research and protocol verification: September 6, 2026.
 
+## Application status — September 10
+
+The publisher application was submitted September 6 under Eliza Research. The protected submission record contains the form's successful-submission confirmation; no reference number was displayed. This is submission evidence, not publisher acceptance. A September 10 search of the submitted contact's mailbox found no matching Pyth, Douro Labs or Blackwell Index response since September 5. Other channels and later responses remain unverified.
+
+Do not submit a duplicate application or invent feed assignments. Obtain Pyth's admission decision, permitted keys, assigned feeds and ingress before activating publication. Personal contact details and the protected submission record are intentionally excluded from this repository.
+
 ## Current architecture
 
 Pyth Core migrated on August 26, 2026. The upgraded Core interface is served by Pyth Pro infrastructure: five routers independently compute aggregates, and **upgraded Core verification** requires three router signatures. This is not the signature threshold of the Pro EVM consumer below. Pythnet and the former Wormhole price-signing path are legacy architecture. The official migration documents take precedence over older publisher pages that still describe buying validators and publishing to Pythnet. [Upgrade architecture](https://docs.pyth.network/price-feeds/core/upgrade/how-it-works), [migration governance](https://forum.pyth.network/t/passed-op-pip-100-pyth-core-to-pyth-pro-migration/2420), [Pythnet sunset](https://forum.pyth.network/t/passed-op-pip-128-pyth-core-sunset-fee-zeroing-balance-repatriation/2662).

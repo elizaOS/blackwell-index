@@ -1,6 +1,6 @@
 # Additional provider adapters
 
-Research date: September 6, 2026. Hyperstack and Shadeform require operator accounts and keys. **Neither adapter has been validated against a live authenticated response.** The fixtures test parsing and failure handling only. Neither source should be enabled for collection, redistribution or benchmark derivation without the applicable permissions and review.
+Research date: September 6, 2026; access update September 10. Hyperstack's authenticated collector returned two observations (B200/B300) with zero errors across three successful API requests. Responses were inspected in memory only. Shadeform remains unverified: the API settings page still encounters a sign-in redirect loop. Neither source should be enabled for collection, redistribution or benchmark derivation without the applicable permissions and review. Hyperstack's account-scoped key is not a read-only guarantee.
 
 | Adapter | Required environment | Supported scope | Live status |
 | --- | --- | --- | --- |
