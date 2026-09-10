@@ -1,43 +1,36 @@
-import { createCollectors } from "../collectors";
+import { collectSources } from "../collect-cycle";
 import { hash, signBatch } from "../crypto";
 import { allowedObservation } from "../engine";
 import type { Journal } from "../journal";
 import type { OracleNode } from "../network";
 import type { Observation } from "../types";
-import { observationSchema } from "../validation";
 import type { runtimeConfig } from "./config";
-import { collectorSchedule, controlledCollectorContext, type CollectionSchedule } from "../collection-control";
+import type { CollectionSchedule } from "../collection-control";
 
 /** Shared adapters only: no simulated prices and no credential values in diagnostics. */
 export async function collectCycle(config: ReturnType<typeof runtimeConfig>, node: OracleNode, store: Journal) {
   const startedAt = Date.now(), observations: Observation[] = [], errors: string[] = [];
   const sources: {collector:string;status:string;observations:number;errors:number;errorCodes?:string[];schedule?:CollectionSchedule}[] = [];
-  for (const collector of createCollectors(config.collectors)) {
-    const provider = config.registry.providers.find(p => p.id === collector.provider);
-    if (!provider?.rights.collect || (provider.rights.expiresAt !== null && provider.rights.expiresAt <= Date.now())) {
-      sources.push({collector:collector.id,status:"COLLECTION_NOT_APPROVED",observations:0,errors:0});
+  for await (const source of collectSources(config.collectors,config.registry,store,{now:Date.now,env:config.credentials,fetch:fetch.bind(globalThis)})) {
+    const {collector,status,schedule}=source;
+    if (status === "COLLECTION_NOT_APPROVED") {
+      sources.push({collector,status,observations:0,errors:0});
       continue;
     }
-    const schedule=collectorSchedule(store,collector.id);
-    if(!schedule.eligible) {
-      sources.push({collector:collector.id,status:"BACKOFF",observations:0,errors:0,schedule});
+    if(status === "BACKOFF") {
+      sources.push({collector,status,observations:0,errors:0,schedule:schedule!});
       continue;
     }
-    try {
-      const result = await collector.collect(controlledCollectorContext(store,collector.id,{ now:Date.now, env:config.credentials, fetch:fetch.bind(globalThis), archive:r => store.archive(r) }));
-      let accepted = 0, rejected = 0;
-      for (const observation of result.observations) {
-        const parsed = observationSchema.safeParse(observation);
-        if (parsed.success) { observations.push(observation); accepted++; } else rejected++;
-      }
+    if(status !== "FAILED") {
+      for(const observation of source.observations)observations.push(observation);
       // Provider error strings can include response snippets; retain only bounded codes/counts here.
-      const errorCount = result.errors.length + rejected;
-      if (errorCount) errors.push(`${collector.id}: ${errorCount} collection or validation errors`);
-      const errorCodes = [...new Set(result.errors.map(error => /^([A-Z][A-Z0-9_]{1,63}):/.exec(error)?.[1] ?? "COLLECTION_FAILED"))];
-      sources.push({collector:collector.id,status:errorCount ? "DEGRADED" : "COLLECTED",observations:accepted,errors:errorCount,schedule:collectorSchedule(store,collector.id),...(errorCodes.length ? {errorCodes} : {})});
-    } catch {
-      errors.push(`${collector.id}: collector failed`);
-      sources.push({collector:collector.id,status:"FAILED",observations:0,errors:1});
+      const errorCount = source.errors.length + source.rejectedObservations;
+      if (errorCount) errors.push(`${collector}: ${errorCount} collection or validation errors`);
+      const errorCodes = [...new Set(source.errors.map(error => /^([A-Z][A-Z0-9_]{1,63}):/.exec(error)?.[1] ?? "COLLECTION_FAILED"))];
+      sources.push({collector,status,observations:source.observations.length,errors:errorCount,schedule:schedule!,...(errorCodes.length ? {errorCodes} : {})});
+    } else {
+      errors.push(`${collector}: collector failed`);
+      sources.push({collector,status,observations:0,errors:1});
     }
   }
   const collectedAt = Date.now();

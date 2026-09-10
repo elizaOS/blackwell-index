@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import type { Snapshot } from "../types";
+import type { PublicationScope, Snapshot } from "../types";
+import { assertSnapshotPublicationScope, parsePublicationScope } from "../publication";
 import { PYTH_RECOVERY_LIMITS } from "./recovery-state";
 
 /** The current official Pyth Pro publisher agent, not the retired Pythnet agent. */
@@ -21,6 +22,7 @@ export interface PythManifest {
   network: string;
   methodologyHash: string;
   registryHash: string;
+  publicationScope?: PublicationScope;
   agentUrl: string;
   maxAgeMs: number;
   futureToleranceMs: number;
@@ -91,6 +93,7 @@ export function validatePythManifest(value: unknown, now = Date.now()): PythMani
   text(m.network, "network");
   hash(m.methodologyHash, "methodologyHash");
   hash(m.registryHash, "registryHash");
+  const publicationScope = parsePublicationScope(m.publicationScope);
   validateAgentUrl(m.agentUrl);
   integer(m.maxAgeMs, "maxAgeMs", 1, 86_400_000);
   integer(m.futureToleranceMs, "futureToleranceMs", 0, 60_000);
@@ -113,6 +116,7 @@ export function validatePythManifest(value: unknown, now = Date.now()): PythMani
   const pythIds = new Set<number>();
   for (const b of m.bindings) {
     text(b.indexFeedId, "indexFeedId");
+    assert(!publicationScope || b.indexFeedId === `SBX:${publicationScope.model}`, "Pyth binding is outside the approved publication scope");
     text(b.symbol, "Pyth symbol");
     integer(b.pythFeedId, "Pyth feed ID", 1, 4_294_967_295);
     integer(b.exponent, "Pyth exponent", -18, 18);
@@ -160,6 +164,7 @@ export function preparePythPublication(snapshot: Snapshot, manifestValue: unknow
   const m = validatePythManifest(manifestValue, now);
   assert(m.enabled && m.approval.status === "APPROVED" && m.approval.expiresAt > now, "Pyth publication needs current publisher and feed approval");
   assert(snapshot.publishable, "Snapshot is not publishable");
+  assertSnapshotPublicationScope(snapshot, m.publicationScope);
   assert(snapshot.network === m.network && snapshot.methodologyHash === m.methodologyHash && snapshot.registryHash === m.registryHash, "Snapshot does not match the approved Pyth network, methodology and registry");
   integer(snapshot.calculatedAt, "snapshot calculatedAt");
   assert(snapshot.calculatedAt <= now + m.futureToleranceMs && now - snapshot.calculatedAt <= m.maxAgeMs, "Snapshot is stale or from the future");

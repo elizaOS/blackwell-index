@@ -1,7 +1,7 @@
 /** Bounded, domain-separated wire protocol. No database, filesystem or network access. */
 import { createPrivateKey, createPublicKey, sign, verify } from "node:crypto";
 import { z } from "zod";
-import { canonical, hash, nodeIdFor } from "./crypto";
+import { canonical, canonicalByteLength, hash, nodeIdFor } from "./crypto";
 import { HOSTED_TABLES, encodeHostedCell, hostedRowSchemas } from "./hosted-export";
 import type { NodeIdentity } from "./types";
 
@@ -53,7 +53,7 @@ const sealSchema=z.object({payload:sealPayloadSchema,signature}).strict();
 export type ArchiveSeal=z.infer<typeof sealSchema>;
 
 function parsed(value:unknown,maximum:number):unknown {
-  if(typeof value!=="string") {if(Buffer.byteLength(canonical(value))>maximum)throw new Error("ARCHIVE_ENVELOPE_TOO_LARGE");return value;}
+  if(typeof value!=="string") {if(canonicalByteLength(value)>maximum)throw new Error("ARCHIVE_ENVELOPE_TOO_LARGE");return value;}
   if(Buffer.byteLength(value)>maximum)throw new Error("ARCHIVE_ENVELOPE_TOO_LARGE");
   return JSON.parse(value);
 }
@@ -102,7 +102,9 @@ export function decodeArchiveRecord(table:number,key:ArchiveRecordKey,bytes:Uint
   const text=new TextDecoder("utf-8",{fatal:true}).decode(bytes),row:unknown=JSON.parse(text);validateArchiveRow(table,row);
   if(canonical(row)!==text||canonical(archiveRecordKey(table,row))!==canonical(key))throw new Error("ARCHIVE_RECORD_KEY_MISMATCH");return row;
 }
-export function parseArchiveBlock(value:unknown,descriptor:ArchiveDescriptor,expected?:{index:number;previousHash:string|null;cursor:ArchiveCursor}):ArchiveBlock {
+/** Decoded bytes have passed the same framing checks and total block-byte cap. */
+export function parseArchiveBlock(value:unknown,descriptor:ArchiveDescriptor,expected?:{index:number;previousHash:string|null;cursor:ArchiveCursor}):{block:ArchiveBlock;fragmentBytes:Buffer[]} {
+  const fragmentBytes:Buffer[]=[];
   const block=blockSchema.parse(parsed(value,ARCHIVE_LIMITS.transportBytes)),{hash:blockHash,...unsigned}=block;
   if(block.checkpointId!==descriptor.payload.checkpointId||block.descriptorHash!==archiveDescriptorHash(descriptor))throw new Error("ARCHIVE_CHECKPOINT_MISMATCH");
   if(archiveBlockHash(unsigned)!==blockHash)throw new Error("ARCHIVE_BLOCK_HASH_MISMATCH");
@@ -114,13 +116,14 @@ export function parseArchiveBlock(value:unknown,descriptor:ArchiveDescriptor,exp
     if(!data.length||data.toString("base64")!==fragment.data||fragment.offset+data.length>fragment.totalLength)throw new Error("ARCHIVE_FRAGMENT_INVALID");
     if(fragment.table<cursor.table||fragment.table>cursor.table&&cursor.offset!==0||fragment.table===cursor.table&&(cursor.offset===0?fragment.position<=cursor.position:fragment.position!==cursor.position||fragment.offset!==cursor.offset)||fragment.table>cursor.table&&fragment.offset!==0)throw new Error("ARCHIVE_CURSOR_MISMATCH");
     if(cursor.offset===0&&fragment.offset!==0)throw new Error("ARCHIVE_FRAGMENT_GAP");
+    fragmentBytes.push(data);
     cursor={table:fragment.table,position:fragment.position,offset:fragment.offset+data.length===fragment.totalLength?0:fragment.offset+data.length};
   }
   if(bytes>ARCHIVE_LIMITS.blockBytes)throw new Error("ARCHIVE_BLOCK_TOO_LARGE");
   // End may advance through empty tables, but never skip an unfinished record.
   if(block.end.table<cursor.table||block.end.table===cursor.table&&(block.end.position!==cursor.position||block.end.offset!==cursor.offset)||block.end.table>cursor.table&&(cursor.offset!==0||block.end.offset!==0||block.end.position!==0))throw new Error("ARCHIVE_CURSOR_MISMATCH");
   if(block.end.table===HOSTED_TABLES.length&&(block.end.position!==0||block.end.offset!==0))throw new Error("ARCHIVE_CURSOR_MISMATCH");
-  return block;
+  return {block,fragmentBytes};
 }
 export function signArchiveSeal(payload:ArchiveSeal["payload"],descriptor:ArchiveDescriptor,identity:NodeIdentity):ArchiveSeal {
   const seal={payload,signature:signatureFor("SBX_ARCHIVE_SEAL_V2",payload,identity)};return parseArchiveSeal(seal,descriptor);

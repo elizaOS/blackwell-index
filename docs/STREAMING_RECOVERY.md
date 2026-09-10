@@ -66,6 +66,8 @@ For Pyth-enabled journals, a separate signed `pythStateHash` binds validated sub
 
 ## Resource limits and failure behavior
 
+Use the repository-pinned Bun 1.4.2 for local streaming recovery. This path explicitly closes each SQLite connection and its outstanding statements before opening the independent verification database. Bun 1.3.14 does not provide the same close behavior and is not supported for this recovery path. The Docker image and verification jobs use the same pinned runtime.
+
 | Boundary | Limit |
 | --- | ---: |
 | Decoded fragment bytes per block | 256 KiB |

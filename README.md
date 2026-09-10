@@ -2,13 +2,15 @@
 
 Open source collectors and reproducible price feeds for NVIDIA B200, B300, GB200 and GB300 rental rates. The Blackwell Index (SBX) combines four model feeds using disclosed fixed weights. ALTX is the product website.
 
+The goal is open participation in compute-price collection, independently reproducible aggregation and decentralized governance. The current prototype provides candidate admission and an explicit registry; independent operators and a shared process for approving registry and methodology changes must still be established. A B200-only benchmark is an optional proposal, not the selected V1 scope.
+
 **Status: development network. Pyth publication is pending onboarding and feed approval.** Public pages never substitute generated prices. An unavailable feed has no current value.
 
 The website separates **Demo** and **Real** modes. Demo is a centralized view of current collected prices, not the governed SBX oracle or a Pyth feed. Real uses `/v1/feeds`, keeps the oracle's approval and quorum gates, and never falls back to demo prices. [Demo scope and permissions](docs/CENTRALIZED_DEMO.md).
 
 ## Run a node
 
-Install [Bun](https://bun.sh) 1.3.14, then:
+Install [Bun](https://bun.sh) 1.4.2, then:
 
 ```sh
 git clone https://github.com/elizaOS/blackwell-index.git
@@ -20,6 +22,8 @@ bun start
 ```
 
 Open `http://127.0.0.1:3410`. Setup generates a random Ed25519 collector key, private local configuration and a persistent SQLite journal. Oracle, Azure and Verda public catalog collectors are enabled for local research. Source publication permissions, provider weights and trusted operator identities start unconfigured. That means real local collection can succeed while public prices remain unavailable.
+
+For collection-only research with the existing draft public-source configuration, run `bun --no-env-file src/cli.ts research-collect`. It retains captures without loading a signing identity, credentials, peers or publisher. `bun --no-env-file src/cli.ts research-health` checks freshness and source errors read-only. See [local supervision and monitoring](docs/LOCAL_RESEARCH_OPERATIONS.md), [source qualification](docs/SOURCE_QUALIFICATION_PACKET.md) and the [unsent partner drafts](docs/OUTREACH_DRAFTS.md).
 
 List collectors with `bun src/cli.ts providers`. Enable selected collectors at setup:
 
@@ -33,7 +37,7 @@ API keys belong in environment variables or a secret manager. `bun src/cli.ts cr
 
 Eleven collectors are implemented. Oracle, Azure and Verda have real public retrieval evidence; authenticated sources still require live account verification. [Prime Intellect](docs/PRIME_INTELLECT.md) is registered but disabled, with no approved collection or publication rights. Its supported account-specific B200/B300 quotes are outside the public-list cohort; GB200/GB300 remain discovery-only.
 
-Anyone can run a node, select sources, submit signed reports and independently reproduce calculations. A new identity joins as a candidate. It does not gain benchmark voting power by creating additional keys. Source approval and verified operator independence live in an explicit registry. Operators can use their own registry; its hash is published with every snapshot. This is an open collector network with governed admission to the benchmark, not permissionless Pyth publisher admission.
+Anyone can run a node, select sources, submit eligible signed reports and independently reproduce calculations. A new identity joins as a candidate. It does not gain benchmark voting power by creating additional keys. An explicit registry records source approval and operator groups; its labels do not themselves verify corporate independence or legal rights. Operators can use their own registry; its hash is published with every snapshot. This is an open collector network with governed admission to the benchmark, not permissionless Pyth publisher admission.
 
 ## Feeds
 
@@ -44,6 +48,8 @@ Anyone can run a node, select sources, submit signed reports and independently r
 | `SBX` | Fixed-weight average of all four model feeds |
 
 The current default registry defines 49 feed slots: 44 provider/model combinations, four model feeds and one composite. These are output definitions, not 49 available prices or evidence of 11 independent supply groups. Existing local registries are not silently migrated.
+
+An [optional B200 publication scope](docs/MODEL_PUBLICATION_SCOPE.md) can restrict publication to `SBX:B200`, with explicit methodology evidence and matching delivery scope. A separate [fixed offer schedule](docs/B200_OFFER_SCHEDULE.md) can require exact eight-GPU HGX membership without substitution when offers or suppliers disappear. Both are inactive in bundled configurations. Defaults still require the four-model composite. Neither establishes source qualification or Pyth/market approval.
 
 The draft cohort is global, public, on-demand, exclusive-instance list pricing in USD per physical GPU-hour. Dividing an instance tariff by GPU count includes the bundled host services. It does not measure GPU-only hardware price, performance-equivalent compute, or guaranteed available capacity. Spot, reservations, scheduled capacity, account-specific rates and fractional tenancy are retained separately and excluded from this cohort.
 
@@ -75,7 +81,9 @@ The adapter targets the current official `pyth-lazer-agent` 0.16.0. It prepares 
 
 No SBX feed IDs, publisher credentials or Pyth approvals are bundled. Pyth acceptance is required for each publisher and feed. A local agent acknowledgement is labeled `QUEUED_LOCAL`; it is not proof of a published oracle. See [Pyth architecture, setup and readback requirements](docs/PYTH.md).
 
-The separate [authenticated readback monitor](docs/PYTH_READBACK.md) checks approved Pro feeds against retained local snapshots. It uses a backend `PYTH_PRO_API_KEY`, a private state database and the node's approved Pyth manifest. The supplied configuration is disabled; its example thresholds require review. No signed payload or chain transaction is verified by this offchain monitor.
+[Phase 0](docs/PHASE_0_ENGINEERING.md) prioritizes a governed rental benchmark and actual market consumption. The [delivery review](docs/ORACLE_DELIVERY_OPTIONS.md) covers managed HIP-3 custom ingestion, native Pro/Core, attributed Data Marketplace distribution and custom-index collaboration. These require different agreements; a Marketplace listing alone does not establish native signed-feed availability or a market listing.
+
+The separate [authenticated readback monitor](docs/PYTH_READBACK.md) checks approved Pro feeds against retained local snapshots. It uses a backend `PYTH_PRO_API_KEY`, a private state database and the node's approved Pyth manifest. The supplied configuration is disabled; its example thresholds require review. Default HTTPS readback does not verify signatures. Optional signed EVM verification is a separate mode with its own acceptance requirements; neither mode submits a chain transaction.
 
 ```sh
 bun run pyth:readback --dir /absolute/private/node \
@@ -85,7 +93,7 @@ bun run pyth:readback --dir /absolute/private/node \
 
 Use `--init-state` only for a reviewed first bootstrap; omit it on restart to preserve accepted timestamps and retry deadlines. Omit `--once` for an abortable continuous monitor under an operator-owned supervisor. See [Pyth recovery](docs/PYTH_RECOVERY.md) before restoring any publishing node; collector identity rotation alone does not revoke the previous Pyth publisher.
 
-The first chain target is **Base Sepolia, followed by Base mainnet**. Solana and Robinhood Chain follow with separate verification tests. [Chain selection and implementation gates](docs/PYTH_CHAIN_SELECTION.md) distinguishes supported Pyth contracts from an actual SBX integration; no SBX transaction has been verified yet.
+The existing signed EVM consumer plan targets **Base Sepolia, followed by Base mainnet**. Solana and Robinhood Chain have separate verification plans. This consumer work does not establish HIP-3 market acceptance or automatically precede a managed custom-feed pilot. [Chain selection and implementation gates](docs/PYTH_CHAIN_SELECTION.md) distinguishes supported Pyth contracts from an actual SBX integration; no SBX transaction has been verified yet.
 
 `bun run pyth:chain-preflight` checks Base Sepolia's network and Pyth deployment through its fixed public RPC; add `--network base` for Base mainnet. It requires no credentials or gas, submits no transactions and does not verify any price or signed payload. A passed deployment check is not oracle readiness.
 
@@ -128,7 +136,11 @@ The [retained-data operating study](docs/OPERATING_STUDY.md) analyzes private ca
 
 For B200 derivative research, `bun src/cli.ts shadow --output data/studies/b200-shadow.json` creates a private, read-only [qualification and stress report](docs/B200_SHADOW_STUDY.md). It preserves production gates and isolates hypothetical source-loss and position scenarios. See the [draft contract](docs/B200_CONTRACT_PROPOSAL.md) and [unsent Pyth/operator packet](docs/PYTH_PARTNER_PACKET.md) for the proposed division of responsibility and pending decisions.
 
-The [delivery comparison](docs/ORACLE_DELIVERY_OPTIONS.md) distinguishes Pyth's managed HIP-3 service, standard Pyth publication, Switchboard custom feeds and Chainlink DataLink/Streams. A production route remains unselected.
+Pyth is the selected delivery provider. The [Pyth delivery plan](docs/ORACLE_DELIVERY_OPTIONS.md) proposes managed HIP-3 custom-feed delivery with an existing market operator, while preserving the tested Pro/Core adapter. Pyth service acceptance, the venue and the exact interface remain pending.
+
+The [local HIP-3 resolver harness](docs/PYTH_HIP3_RESOLVER_ACCEPTANCE.md) tests signed synthetic SBX inputs against pinned official Pyth code, including exact decimals and stale-source refusal. It runs no publisher or venue submission and does not invent a managed-service ingestion API.
+
+`bun --no-env-file src/cli.ts audit-sources --output data/studies/b200-sources.json` verifies and replays retained B200 response evidence entirely offline. The [source audit](docs/B200_SOURCE_AUDIT.md) reports integrity, offer comparability and unverified rights/ownership separately; the [Pyth acceptance checklist](docs/PYTH_LOCAL_ACCEPTANCE.md) identifies what still needs external agreement.
 
 The [launch checklist](docs/LAUNCH_TODO.md) names the required accounts, source permissions, Pyth onboarding, external verification and operating evidence. [Domain status](docs/DOMAIN_STATUS.md) records the four requested registrations. Private keys, raw account data and private business documents are not included in this repository.
 

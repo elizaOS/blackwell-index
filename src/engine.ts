@@ -2,6 +2,8 @@ import { hash, verifyBatch } from "./crypto";
 import { distance, fromMicros, median, toMicros, weighted } from "./decimal";
 import { MODELS, type Feed, type GpuModel, type Methodology, type Observation, type Registry, type SignedBatch, type Snapshot } from "./types";
 import { parseMethodology, parseRegistry, signedBatchSchema } from "./validation";
+import { compileOfferSchedule, matchingScheduledOffer } from "./offer-schedule";
+import { instanceResourceKey } from "./instance-resources";
 
 export function requiredOperators(registry: Registry, methodology: Methodology): number {
   const groups = new Set(registry.operators.filter(x => x.enabled).map(x => x.operatorGroup)).size;
@@ -14,17 +16,18 @@ export function allowedObservation(o: Observation, registry: Registry, now: numb
   return r.collect && r.redistribute && (purpose !== "derive" || r.derive) && Boolean(r.evidence.trim()) && (r.expiresAt === null || r.expiresAt > now);
 }
 function quoteKey(o: Observation): string {
-  return JSON.stringify([o.provider, o.source, o.model, o.region, o.sku, o.procurement, o.priceBasis, o.tenancy, o.gpuCount, [...o.includes].sort(), o.priceScope ?? "PUBLIC", o.topology ?? "UNKNOWN", o.minimumOrderGpuCount ?? null]);
+  return JSON.stringify([o.provider, o.source, o.model, o.region, o.sku, o.procurement, o.priceBasis, o.tenancy, o.gpuCount, [...o.includes].sort(), o.priceScope ?? "PUBLIC", o.topology ?? "UNKNOWN", o.minimumOrderGpuCount ?? null,
+    ...(o.instanceResources ? [instanceResourceKey(o.instanceResources)] : [])]);
 }
 function empty(id: string, kind: Feed["kind"], model: GpuModel | null, provider: string | null, now: number, reason: string): Feed {
   return { id, kind, model, provider, status: "UNAVAILABLE", price: null, confidence: null, observedAt: null, calculatedAt: now, reasons: [reason], contributors: [], weights: {} };
 }
 interface Vote { observation: Observation; group: string }
-interface Quote { observation: Observation; price: bigint; spread: bigint; groups: string[]; observedAt: number }
 
 /** Pure calculation: identical inputs, configuration and time yield identical bytes. */
 export function calculate(batches: SignedBatch[], registryInput: Registry, methodologyInput: Methodology, now: number): Snapshot {
   const registry = parseRegistry(registryInput), methodology = parseMethodology(methodologyInput);
+  const offerSchedule = compileOfferSchedule(methodology, registry);
   if (!Number.isSafeInteger(now) || now <= 0) throw new Error("Invalid calculation time");
   const rejected: Snapshot["rejected"] = [];
   const accepted: SignedBatch[] = [];
@@ -61,7 +64,8 @@ export function calculate(batches: SignedBatch[], registryInput: Registry, metho
       if (o.priceEffectiveAt !== null && o.priceEffectiveAt > o.observedAt + methodology.futureToleranceMs) continue;
       if (o.expiresAt !== null && o.expiresAt <= now) continue;
       if (o.priceBasis !== "LIST" && (o.availableGpuCount === 0 || o.availability !== "AVAILABLE")) continue;
-      const key = quoteKey(o);
+      const key = offerSchedule && o.model === "B200" ? matchingScheduledOffer(o, offerSchedule) : quoteKey(o);
+      if (key === undefined) continue;
       // A signed list cannot manufacture extra votes using duplicate records.
       if (seen.has(key)) continue;
       seen.add(key);
@@ -73,15 +77,15 @@ export function calculate(batches: SignedBatch[], registryInput: Registry, metho
     }
   }
   const quorum = requiredOperators(registry, methodology);
-  const quotes: Quote[] = [];
-  for (const row of votes.values()) {
+  const quotes: { key: string; observation: Observation; price: bigint; spread: bigint; groups: string[]; observedAt: number }[] = [];
+  for (const [key, row] of votes) {
     const values = [...row.values()];
     if (values.length < quorum) continue;
     const center = median(values.map(x => toMicros(x.observation.price)));
     const agreeing = values.filter(x => distance(toMicros(x.observation.price), center) * 10_000n <= center * BigInt(methodology.maxCollectorDeviationBps));
     if (agreeing.length < quorum) continue;
     const price = median(agreeing.map(x => toMicros(x.observation.price)));
-    quotes.push({ observation: agreeing[0]!.observation, price,
+    quotes.push({ key, observation: agreeing[0]!.observation, price,
       spread: agreeing.reduce((s, x) => { const d = distance(toMicros(x.observation.price), price); return d > s ? d : s; }, 0n),
       groups: agreeing.map(x => x.group).sort(), observedAt: Math.min(...agreeing.map(x => x.observation.observedAt)) });
   }
@@ -89,6 +93,14 @@ export function calculate(batches: SignedBatch[], registryInput: Registry, metho
   for (const provider of [...registry.providers].sort((a, b) => a.id.localeCompare(b.id))) for (const model of MODELS) {
     const feed = empty(`SBX:${provider.id}:${model}`, "PROVIDER", model, provider.id, now, "INSUFFICIENT_MATCHED_OPERATOR_REPORTS");
     const matching = quotes.filter(q => q.observation.provider === provider.id && q.observation.model === model);
+    if (offerSchedule && model === "B200") {
+      const required = offerSchedule.providerKeys.get(provider.id);
+      const present = new Set(matching.map(quote => quote.key));
+      if (!required || [...required].some(key => !present.has(key))) {
+        feed.reasons = [required ? "MISSING_SCHEDULED_OFFER" : "PROVIDER_OUTSIDE_OFFER_SCHEDULE"];
+        feeds.push(feed); continue;
+      }
+    }
     if (matching.length) {
       const regions = [...new Set(matching.map(x => x.observation.region))].sort();
       const regionalPrices = regions.map(region => median(matching.filter(x => x.observation.region === region).map(x => x.price)));
@@ -106,8 +118,9 @@ export function calculate(batches: SignedBatch[], registryInput: Registry, metho
     const groups = Object.keys(weights).sort();
     const inputs: Array<{ group: string; price: bigint; weight: number; time: number; spread: bigint }> = [];
     for (const group of groups) {
-      const providers = new Set(registry.providers.filter(p => p.economicGroup === group).map(p => p.id));
+      const providers = offerSchedule && model === "B200" ? offerSchedule.groupProviders.get(group)! : new Set(registry.providers.filter(p => p.economicGroup === group).map(p => p.id));
       const matches = feeds.filter(f => f.kind === "PROVIDER" && f.model === model && f.provider && providers.has(f.provider) && f.status === "READY");
+      if (offerSchedule && model === "B200" && matches.length !== providers.size) continue;
       if (matches.length) {
         const price = median(matches.map(f => toMicros(f.price!)));
         const spread = matches.reduce((s, f) => { const d = distance(toMicros(f.price!), price) + BigInt(f.confidence!.replace(".", "")); return d > s ? d : s; }, 0n);
@@ -133,8 +146,11 @@ export function calculate(batches: SignedBatch[], registryInput: Registry, metho
   }
   feeds.push(composite);
   const activeMethodology = methodology.status === "APPROVED" && methodology.effectiveAt <= now;
+  const publicationScope = methodology.publicationScope && { kind: methodology.publicationScope.kind, model: methodology.publicationScope.model };
+  const publicationFeed = publicationScope ? models.find(feed => feed.model === publicationScope.model)! : composite;
   if (methodology.effectiveAt > now) for (const f of feeds) Object.assign(f, { status: "UNAVAILABLE", price: null, confidence: null, reasons: ["METHODOLOGY_NOT_EFFECTIVE"] });
   return { schemaVersion: 1, network: registry.network, calculatedAt: now, methodologyVersion: methodology.version,
-    methodologyHash: hash(methodology), registryHash: hash(registry), publishable: activeMethodology && composite.status === "READY",
+    methodologyHash: hash(methodology), registryHash: hash(registry), publishable: activeMethodology && publicationFeed.status === "READY",
+    ...(publicationScope ? { publicationScope } : {}),
     feeds, inputBatchHashes: accepted.map(hash).sort(), rejected: rejected.sort((a, b) => a.batchHash.localeCompare(b.batchHash) || a.reason.localeCompare(b.reason)) };
 }

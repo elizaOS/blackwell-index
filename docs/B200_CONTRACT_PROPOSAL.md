@@ -1,6 +1,6 @@
 # B200 contract proposal — draft for partner review
 
-This is a proposed benchmark definition and a local research specification, not an approved market or a launch authorization. An existing market operator and Pyth's managed HIP-3 service are one candidate route; compare Switchboard and Chainlink against the chosen venue in [delivery options](ORACLE_DELIVERY_OPTIONS.md). Build the benchmark here; use the selected partner's supported delivery and trading infrastructure.
+This is a proposed benchmark definition and a local research specification, not an approved market or a launch authorization. Pyth is the selected delivery provider. The proposed route uses an existing market operator and Pyth's managed HIP-3 service, subject to service acceptance and interface agreement; see the [Pyth delivery decision](ORACLE_DELIVERY_OPTIONS.md). Build the benchmark here; use Pyth's supported delivery and the venue's trading infrastructure.
 
 ## Division of responsibility
 
@@ -31,11 +31,11 @@ For the local stress calculation only, quantity is an integer number of GPU-hour
 
 ## Qualification and single-model launch
 
-`qualifyModel` calls the existing signed-report engine. It reports model calculation readiness, current composite publication eligibility and separate external launch gates. It grants none of those external approvals.
+`qualifyModel` calls the existing signed-report engine. It reports model calculation readiness, eligibility under the configured publication policy and separate external launch gates. It grants none of those external approvals.
 
-Current software requires at least three economic provider groups per model and an independently admitted collector quorum; those are SBX policy choices, not established custom-feed requirements from Pyth. Several collectors copying one provider do not create independent economic sources. The current approved methodology covers all four models, and publication still requires the composite.
+Current software requires at least three economic provider groups per approved model and an independently admitted collector quorum; those are SBX policy choices, not established custom-feed requirements from Pyth. Several collectors copying one provider do not create independent economic sources. The default methodology approval schema covers all four models, and default publication still requires the composite.
 
-A single-model production release needs a separately reviewed change: bind an approved model scope to exact methodology/registry hashes, constituent weights, effective time, approval evidence and delivery bindings; calculate it through the same validation and quorum rules; permit only approved in-scope feeds. Legacy manifests must keep their existing behavior. Do not simply remove `snapshot.publishable` or manufacture unused model constituents. First confirm whether an administered benchmark route permits a simpler operator model.
+The [optional B200 publication policy](MODEL_PUBLICATION_SCOPE.md) now binds model scope to exact methodology/registry hashes, effective time, approval evidence and delivery bindings, using the same source validation and quorum rules. It permits only `SBX:B200`; legacy manifests keep their existing behavior. No bundled configuration activates it. The separate [fixed offer schedule](B200_OFFER_SCHEDULE.md) now supports exact eight-GPU HGX membership and rejects missing selected offers or providers. It is inactive and no real panel is approved. Optional [resource metadata](INSTANCE_RESOURCES.md) now binds exact reported vCPU/RAM/storage quantities. Neither component labels nor reported quantities prove contractual entitlements or commercial comparability. Confirm the intended scope and whether an administered benchmark route permits a simpler operator model before activation.
 
 ## Freshness and failure contract
 

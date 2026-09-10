@@ -12,8 +12,8 @@ import { ARCHIVE_OPERATOR_ERRORS } from "../archive-protocol";
 
 const NODE_NAMES = ["primary", "secondary"] as const;
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
-type Cycle = Awaited<ReturnType<typeof collectCycle>>;
-type CollectionState = {status:"IDLE"|"RUNNING"|"COMPLETE"|"FAILED";startedAt?:number;completedAt?:number;lastCycle?:Cycle};
+
+type CollectionState = {status:"IDLE"|"RUNNING"|"COMPLETE"|"FAILED";startedAt?:number;completedAt?:number;lastCycle?:Awaited<ReturnType<typeof collectCycle>>};
 
 function secured(response: Response): Response {
   const headers = new Headers(response.headers);

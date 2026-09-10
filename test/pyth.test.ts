@@ -22,6 +22,40 @@ function snapshot(): Snapshot {
 }
 
 describe("Pyth Pro publication boundary", () => {
+  test("B200 publication requires matching explicit scopes and forbids other ready feeds", () => {
+    const s = snapshot(), m = manifest();
+    s.feeds[0]!.id = "SBX:B200"; m.bindings[0]!.indexFeedId = "SBX:B200";
+    s.publicationScope = { kind: "MODEL", model: "B200" };
+    expect(() => preparePythPublication(s, m, catalog, now)).toThrow("scope");
+    m.publicationScope = { kind: "MODEL", model: "B200" };
+    expect(preparePythPublication(s, m, catalog, now).request.params[0]!.source_timestamp).toBe((now - 12_345) * 1000);
+    for (const mutate of [
+      (value: PythManifest) => { value.methodologyHash = "d".repeat(64); },
+      (value: PythManifest) => { value.registryHash = "d".repeat(64); },
+      (value: PythManifest) => { value.network = "different-network"; },
+      (value: PythManifest) => { value.approval.status = "PENDING"; },
+      (value: PythManifest) => { value.approval.expiresAt = now - 1; },
+      (value: PythManifest) => { value.maxAgeMs = 1000; },
+    ]) {
+      const wrong = structuredClone(m); mutate(wrong);
+      expect(() => preparePythPublication(s, wrong, catalog, now)).toThrow();
+    }
+    const legacy = { ...s }; delete legacy.publicationScope;
+    expect(() => preparePythPublication(legacy, m, catalog, now)).toThrow("scope");
+    for (const id of ["SBX", "SBX:B300", "SBX:alpha:B200"]) {
+      const wrong = structuredClone(m); wrong.bindings[0]!.indexFeedId = id;
+      s.feeds.push({ ...s.feeds[0]!, id });
+      expect(() => preparePythPublication(s, wrong, catalog, now)).toThrow("outside");
+    }
+    for (const publicationScope of [null, { kind: "MODEL", model: "B300" }, { ...m.publicationScope, unexpected: true }]) {
+      expect(() => validatePythManifest({ ...m, publicationScope }, now)).toThrow();
+      expect(() => preparePythPublication({ ...s, publicationScope } as unknown as Snapshot, m, catalog, now)).toThrow();
+    }
+    for (const patch of [{ kind: "PROVIDER" }, { model: "B300" }, { provider: "alpha" }]) {
+      const wrong = structuredClone(s); Object.assign(wrong.feeds[0]!, patch);
+      expect(() => preparePythPublication(wrong, m, catalog, now)).toThrow("identity");
+    }
+  });
   test("uses the modern agent schema and preserves source time", () => {
     const result = preparePythPublication(snapshot(), manifest(), catalog, now);
     expect(result.status).toBe("PREPARED");
@@ -100,6 +134,23 @@ describe("independent Pyth output checks", () => {
 });
 
 describe("automated Pyth publication tick", () => {
+  test("scope mismatch blocks before requests, while scoped retries preserve source high-water marks", async () => {
+    const store = new Store(":memory:"), s = snapshot(), m = manifest(); let requests = 0, submissions = 0;
+    s.feeds[0]!.id = "SBX:B200"; m.bindings[0]!.indexFeedId = "SBX:B200";
+    s.publicationScope = { kind: "MODEL", model: "B200" };
+    const deps = { now: () => now, fetchCatalog: async () => { requests++; return catalog; },
+      submit: (async publication => { submissions++; return { status: "QUEUED_LOCAL", requestId: publication.request.id, snapshotHash: publication.snapshotHash, queuedAt: now }; }) as typeof submitToPythAgent };
+    try {
+      expect((await publishSnapshot(s, m, store, deps)).status).toBe("BLOCKED");
+      expect(requests).toBe(0); expect(submissions).toBe(0);
+      m.publicationScope = { kind: "MODEL", model: "B200" };
+      expect((await publishSnapshot(s, m, store, deps)).status).toBe("QUEUED_LOCAL");
+      s.calculatedAt++;
+      expect((await publishSnapshot(s, m, store, deps)).status).toBe("NO_NEW_SOURCE_DATA");
+      expect(submissions).toBe(1);
+      expect(store.db.query("SELECT last_attempted_timestamp FROM pyth_submission_state").get()).toEqual({ last_attempted_timestamp: (now - 12_345) * 1000 });
+    } finally { store.close(); }
+  });
   test("invalid pre-existing runtime state blocks before any catalog or agent request",async()=>{
     const store=new Store(":memory:");let calls=0;
     try {

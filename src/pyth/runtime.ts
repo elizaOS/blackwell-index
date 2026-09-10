@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { hash } from "../crypto";
 import type { Journal } from "../journal";
 import type { Snapshot } from "../types";
+import { assertSnapshotPublicationScope } from "../publication";
 import { preparePythPublication, PYTH_SYMBOLS_URL, submitToPythAgent, validatePythManifest, validatePythSymbols, type PythQueueReceipt } from "./index";
 import { PYTH_RECOVERY_LIMITS, PYTH_RUNTIME_SQL, verifyPythRuntimeState } from "./recovery-state";
 
@@ -52,6 +53,7 @@ export async function publishSnapshot(snapshot:Snapshot,manifest:unknown,journal
   try {
     const m=validatePythManifest(manifest,initialTime);
     if(!m.enabled)return {status:"DISABLED",feeds:[]};
+    assertSnapshotPublicationScope(snapshot,m.publicationScope);
     if(!snapshot.publishable)return {status:"UNAVAILABLE",feeds:[]};
     if(m.approval.status!=="APPROVED"||m.approval.expiresAt<=initialTime)throw new Error("Pyth publication needs current publisher and feed approval");
     verifyPythRuntimeState(db,initialTime);

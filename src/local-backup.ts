@@ -104,7 +104,7 @@ export async function backupLocalStreamNode(root:string,configPath:string,output
       // Its synchronous SQLite operation is not interruptible by the JS AbortSignal.
       source.query("VACUUM INTO ?").run(path);
       unchangedSourceFile();
-    }finally{source.close();}
+    }finally{source.close(true);}
     chmodSync(path,0o600);options.signal?.throwIfAborted();
     if(hash(settings(root,configPath))!==settingsHash)fail("CONFIGURATION_CHANGED");
     copy=new Database(path,{strict:true});
@@ -139,14 +139,16 @@ export async function backupLocalStreamNode(root:string,configPath:string,output
     }
     await backupStreamFrames(frames(),outputPath,keyPath,options);
     // A promoted ciphertext is not a successful backup until this independent full import verifies.
-    copy.close();copy=undefined;
+    // Release the connection and all owned statements before the independent
+    // import opens another database; do not defer native cleanup until GC.
+    copy.close(true);copy=undefined;
     const inspection=await inspectStreamBackup(outputPath,keyPath,options);
     unchangedSourceFile();
     if(hash(settings(root,configPath))!==settingsHash)fail("CONFIGURATION_CHANGED");
     return {...inspection,file:outputPath,sourceName:"local",sourceBuildVerification:"OPERATOR_ASSERTED",
       contentInspection:"VERIFIED",privateKeysIncluded:false,providerCredentialsIncluded:false};
   }finally {
-    try{copy?.close();}finally{
+    try{copy?.close(true);}finally{
       // Exact directory created by this operation, never a user-supplied root or destination.
       rmSync(directory,{recursive:true,force:true});
     }

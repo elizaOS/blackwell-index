@@ -126,7 +126,8 @@ function scope(manifest:PythManifest,configuration:PythReadbackConfig):string {
   // Capture the exact reviewed policy. Renewed approval or changed bindings require
   // an explicit state migration/review, never silent loss of high-water marks.
   return hash({kind:"SBX_PYTH_READBACK_V1",configuration,network:manifest.network,registryHash:manifest.registryHash,
-    methodologyHash:manifest.methodologyHash,approval:manifest.approval,bindings:manifest.bindings});
+    methodologyHash:manifest.methodologyHash,approval:manifest.approval,bindings:manifest.bindings,
+    ...(manifest.publicationScope?{publicationScope:manifest.publicationScope}:{})});
 }
 export function validatePythReadbackCatalog(raw:unknown,manifest:PythManifest,config:PythReadbackConfig):void {
   let parsed:ReturnType<typeof validatePythSymbols>;

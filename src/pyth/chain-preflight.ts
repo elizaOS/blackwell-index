@@ -60,8 +60,8 @@ function decodeVersion(value:unknown):string {
   if(!/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/.test(text))fail("VERSION_ABI_INVALID");return text;
 }
 function decodeFee(value:unknown):string {const bytes=hex(value,32);if(bytes.length!==32)fail("FEE_ABI_INVALID");return BigInt("0x"+bytes.toString("hex")).toString();}
-type Block={number:string;hash:string;timestamp:string};
-function block(value:unknown,clock:number):Block {
+
+function block(value:unknown,clock:number):{number:string;hash:string;timestamp:string} {
   if(!value||typeof value!=="object"||Array.isArray(value))fail("SEALED_BLOCK_REQUIRED");
   const raw=value as Record<string,unknown>,height=quantity(raw.number),timestamp=quantity(raw.timestamp);
   if(height===0n||typeof raw.hash!=="string"||!/^0x[0-9a-f]{64}$/.test(raw.hash)||/^0x0+$/.test(raw.hash))fail("SEALED_BLOCK_REQUIRED");

@@ -101,6 +101,20 @@ test('switching an existing unsigned watermark database to signed mode requires 
   expect(report.code).toBe('STATE_SCOPE_REVIEW_REQUIRED');expect(f.requests).toHaveLength(count);
 });
 
+test("a B200 publication scope is explicit in durable readback state and cannot replace legacy state", async () => {
+  const f = fixture(), m = manifest(); m.bindings[0]!.indexFeedId = "SBX:B200"; f.options.manifest = m;
+  const first = await readbackTick(f.options, f.deps); expect(first.status).toBe("UPSTREAM_OBSERVED");
+  f.options.state = first.state; const requests = f.requests.length;
+  m.publicationScope = { kind: "MODEL", model: "B200" };
+  const changed = await readbackTick(f.options, f.deps);
+  expect(changed.code).toBe("STATE_SCOPE_REVIEW_REQUIRED"); expect(f.requests).toHaveLength(requests);
+  const fresh = fixture(); fresh.options.manifest = m;
+  const accepted = await readbackTick(fresh.options, fresh.deps);
+  expect(accepted.status).toBe("UPSTREAM_OBSERVED"); expect(accepted.state!.scopeHash).not.toBe(first.state!.scopeHash);
+  fresh.options.state = accepted.state; delete m.publicationScope;
+  expect((await readbackTick(fresh.options, fresh.deps)).code).toBe("STATE_SCOPE_REVIEW_REQUIRED");
+});
+
 test('signed verification rechecks approval after the RPC returns',async()=>{
   const f=signedFixture();(f.options.manifest as PythManifest).approval.expiresAt=NOW+1000;
   const request=f.deps.fetch!;

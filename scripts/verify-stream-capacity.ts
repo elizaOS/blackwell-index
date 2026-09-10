@@ -108,7 +108,7 @@ async function phaseRun(phase: Phase, directory: string) {
           if (!block) break;
           if (blocks % 257 === 0) { check(canonical(readCheckpointBlock(journal, m.identities[0]!, m.metadata, descriptor.payload.checkpointId, blocks, createdAt + 2)) === canonical(block), "RETRY_BYTES_CHANGED"); retryChecks++; }
           blocks++; yield Buffer.from(canonical(block));
-          if (blocks % 1000 === 0) { process.stdout.write(`${JSON.stringify({ progress: phase, blocks })}\n`); await setImmediate(); }
+          if (blocks % 1000 === 0) { process.stdout.write(`${JSON.stringify({ progress: phase, blocks, memory: process.memoryUsage() })}\n`); await setImmediate(); }
         }
         yield Buffer.from(canonical(sealCheckpoint(journal, m.identities[0]!, m.metadata, descriptor.payload.checkpointId, createdAt + 2)));
       }

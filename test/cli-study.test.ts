@@ -86,7 +86,7 @@ afterEach(async () => {
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
-test("shadow CLI preserves the journal and secrets, saves private new-only output and never enables publication", async () => {
+test.each(["shadow", "audit-sources"])("%s CLI preserves the journal and secrets, saves private new-only output and never enables publication", async (command) => {
   const directory = fixture(), { registry, methodology } = environment();
   const configPath = join(directory, "config/node.local.json"), value = JSON.parse(readFileSync(configPath, "utf8")) as NodeConfig;
   value.network = registry.network;
@@ -94,11 +94,12 @@ test("shadow CLI preserves the journal and secrets, saves private new-only outpu
   writeFileSync(join(directory, value.registryPath), JSON.stringify(registry));
   writeFileSync(join(directory, value.methodologyPath), JSON.stringify(methodology));
   const before = persistentNodeFiles(directory), logicalBefore = logicalState(directory);
-  const args = ["shadow", "--at", String(NOW + 300_000)];
+  const args = [command, "--at", String(NOW + 300_000)];
   const result = await launch(directory, args).result;
   expect(result.code).toBe(0); expect(result.stderr).toBe("");
-  expect(JSON.parse(result.stdout)).toMatchObject({ kind: "B200_SHADOW_STUDY", reportSaved: false, captures: 2,
-    publishable: false, liveMarketQualified: false, currentResearchPriceAvailable: false, sustainedQualification: "NOT_ESTABLISHED" });
+  expect(JSON.parse(result.stdout)).toMatchObject({ kind: command === "shadow" ? "B200_SHADOW_STUDY" : "B200_RETAINED_SOURCE_AUDIT", reportSaved: false, captures: 2,
+    publishable: false, liveMarketQualified: false,
+    ...(command === "shadow" ? { currentResearchPriceAvailable: false, sustainedQualification: "NOT_ESTABLISHED" } : { status: "LOCAL_REPLAY_FAILED", independentlyVerifiedEconomicGroups: null }) });
   expect(result.stdout).not.toContain(PRIVATE_MARKER); expect(result.stdout).not.toContain("7.125000");
   expect(persistentNodeFiles(directory)).toEqual(before); expect(logicalState(directory)).toEqual(logicalBefore);
   const destination = join(directory, "data/studies/shadow.json");
@@ -107,7 +108,7 @@ test("shadow CLI preserves the journal and secrets, saves private new-only outpu
   expect(JSON.parse(reportBytes.toString()).publishable).toBe(false); expect(statSync(destination).mode & 0o777).toBe(0o600);
   expect(statSync(join(directory, "data/studies")).mode & 0o777).toBe(0o700); expect(logicalState(directory)).toEqual(logicalBefore);
   const duplicate = await launch(directory, [...args, "--output", destination]).result;
-  expect(duplicate.code).toBe(1); expect(duplicate.stderr).toContain("Shadow output already exists"); expect(readFileSync(destination)).toEqual(reportBytes);
+  expect(duplicate.code).toBe(1); expect(duplicate.stderr).toContain(`${command === "shadow" ? "Shadow" : "Source audit"} output already exists`); expect(readFileSync(destination)).toEqual(reportBytes);
 }, 30000);
 
 test("study prints only counts and preserves logical data, schema and private files", async () => {

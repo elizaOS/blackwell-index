@@ -109,6 +109,56 @@ describe("authenticated pricing collectors", () => {
     expect(result.errors).toEqual([]);
     expect(result.observations[0]).toMatchObject({ price: "6.690000", instancePrice: "53.520000", gpuCount: 8, availableGpuCount: null, availability: "AVAILABLE" });
   });
+  const lambdaDocument = (specs: Record<string, unknown>, regions: string[] = ["test-region"]) => ({ data: { "fixture-b200": {
+    instance_type: { name: "fixture-b200", gpu_description: "NVIDIA B200 SXM6", price_cents_per_hour: 6400, specs },
+    regions_with_capacity_available: regions.map(name => ({ name })),
+  } } });
+  test("Lambda quantity enrichment is explicit and preserves legacy bytes from the same response", async () => {
+    const body = lambdaDocument({ gpus: 8, vcpus: 17, memory_gib: 123, storage_gib: 4097 });
+    const legacy = context(() => json(body), { LAMBDA_API_KEY: "fixture" });
+    const enabled = context(() => json(body), { LAMBDA_API_KEY: "fixture", LAMBDA_INSTANCE_RESOURCES: "1" });
+    const old = await collect("lambda-cloud", legacy.ctx), enriched = await collect("lambda-cloud", enabled.ctx);
+    expect(old.errors).toEqual([]); expect(enriched.errors).toEqual([]);
+    expect(old.observations[0]).not.toHaveProperty("instanceResources");
+    const { instanceResources, ...unchanged } = enriched.observations[0]!;
+    expect(unchanged).toEqual(old.observations[0]!);
+    expect(instanceResources).toEqual({ schemaVersion: 1, scope: "FULL_INSTANCE", vcpus: 17, memoryGiB: 123, storageGiB: 4097 });
+    expect(enriched.observations[0]).not.toHaveProperty("topology");
+    expect(legacy.evidence).toEqual(enabled.evidence);
+    expect(legacy.requests).toHaveLength(1); expect(enabled.requests).toHaveLength(1);
+    expect(collectorCatalog.find(value => value.id === "lambda-cloud")).toMatchObject({ defaultEnabled: false,
+      configurationEnvs: ["LAMBDA_INSTANCE_RESOURCES"] });
+  });
+  test("Lambda resource mode rejects malformed required quantities without falling back to legacy observations", async () => {
+    for (const field of ["vcpus", "memory_gib", "storage_gib"] as const) {
+      for (const invalid of [undefined, null, "123", -1, 1.5, true, 1_000_000_001, ...(field === "storage_gib" ? [] : [0])]) {
+        const body = lambdaDocument({ gpus: 8, vcpus: 17, memory_gib: 123, storage_gib: 4097, [field]: invalid });
+        const { ctx, evidence } = context(() => json(body), { LAMBDA_API_KEY: "fixture", LAMBDA_INSTANCE_RESOURCES: "1" });
+        const result = await collect("lambda-cloud", ctx);
+        expect(result.observations).toEqual([]); expect(result.errors[0]).toContain("INVALID_INSTANCE_RESOURCES");
+        expect(evidence).toHaveLength(1);
+        const legacy = context(() => json(body), { LAMBDA_API_KEY: "fixture" });
+        expect((await collect("lambda-cloud", legacy.ctx)).observations).toHaveLength(1);
+      }
+    }
+  });
+  test("Lambda resource mode retains known zero storage and unavailable regions without inventing capacity", async () => {
+    const { ctx } = context(() => json(lambdaDocument({ gpus: 8, vcpus: 17, memory_gib: 123, storage_gib: 0 }, [])),
+      { LAMBDA_API_KEY: "fixture", LAMBDA_INSTANCE_RESOURCES: "1" });
+    const result = await collect("lambda-cloud", ctx);
+    expect(result.errors).toEqual([]);
+    expect(result.observations[0]).toMatchObject({ region: "global", availability: "UNAVAILABLE", availableGpuCount: null,
+      instanceResources: { schemaVersion: 1, scope: "FULL_INSTANCE", vcpus: 17, memoryGiB: 123, storageGiB: 0 } });
+  });
+  test("unsupported Lambda resource configuration fails before any fetch", async () => {
+    for (const mode of ["", "0", "true", " 1", "1 ", "2"]) {
+      const { ctx, requests } = context(() => { throw new Error("must not fetch"); },
+        { LAMBDA_API_KEY: "fixture", LAMBDA_INSTANCE_RESOURCES: mode });
+      const result = await collect("lambda-cloud", ctx);
+      expect(result.observations).toEqual([]); expect(result.errors[0]).toContain("UNSUPPORTED_CONFIGURATION");
+      expect(requests).toHaveLength(0);
+    }
+  });
   test("Runpod keeps API keys out of observation and evidence URLs", async () => {
     const { ctx, evidence } = context(url => {
       expect(url.searchParams.get("api_key")).toBe("unit-test-secret");

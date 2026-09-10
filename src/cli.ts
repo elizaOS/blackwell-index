@@ -3,25 +3,28 @@ import { resolve, dirname } from "node:path";
 import { parseArgs, parseEnv } from "node:util";
 import { generateIdentity, canonical, signBatch, hash, nodeIdFor } from "./crypto";
 import { defaultMethodology, defaultRegistry, parseConfig, type NodeConfig } from "./config";
-import { parseMethodology, parseRegistry, observationSchema } from "./validation";
+import { parseMethodology, parseRegistry } from "./validation";
 import { Store } from "./store";
+import { collectCapture } from "./collect-cycle";
+import { collectResearch, researchHealth, validateResearch, validateResearchJournal } from "./research";
 import { OracleNode } from "./network";
 import { allowedObservation, calculate } from "./engine";
-import { collectorCatalog, createCollectors } from "./collectors";
+import { collectorCatalog } from "./collectors";
 import { publishSnapshot } from "./pyth/runtime";
 import { backupNode, createRecoveryKey, inspectBackup, RECOVERY_MARKER, restoreNode } from "./recovery";
-import { collectorSchedule, controlledCollectorContext } from "./collection-control";
+import { collectorSchedule } from "./collection-control";
 import { backupHostedExport } from "./hosted-recovery";
 import { HOSTED_EXPORT_LIMITS } from "./hosted-export";
 import { Database } from "bun:sqlite";
 import { operatingStudy } from "./study";
 import { streamingStudy } from "./stream-study";
 import { shadowStudy } from "./shadow";
+import { auditB200Sources } from "./source-audit";
 import { backupStreamFrames, inspectStreamBackup, restoreStreamNode } from "./stream-recovery";
 import { backupLocalStreamNode } from "./local-backup";
 import { ARCHIVE_LIMITS } from "./archive-protocol";
 import type { SqlDriver } from "./journal";
-import type { NodeIdentity, Observation, SignedBatch } from "./types";
+import type { NodeIdentity, SignedBatch } from "./types";
 
 function cliArguments() {
   try {return parseArgs({args:process.argv.slice(2),allowPositionals:true,options:{
@@ -56,22 +59,7 @@ function load():{config:NodeConfig;node:OracleNode;store:Store} {
   return {config,store,node:new OracleNode({identity,registry,methodology,store,publicDir:resolve(import.meta.dir,"../public")})};
 }
 async function collect(config:NodeConfig,node:OracleNode,store:Store):Promise<void> {
-  const observations:Observation[]=[],errors:string[]=[];
-  for(const collector of createCollectors(config.collectors)) {
-    const provider=node.options.registry.providers.find(p=>p.id===collector.provider);
-    if(!provider?.rights.collect||(provider.rights.expiresAt!==null&&provider.rights.expiresAt<=Date.now())) {errors.push(`${collector.id}: collection permission not configured`);continue;}
-    const schedule=collectorSchedule(store,collector.id);
-    if(!schedule.eligible){errors.push(`${collector.id}: ${schedule.code}; nextAttemptAt=${schedule.nextAttemptAt}`);continue;}
-    try {
-      const result=await collector.collect(controlledCollectorContext(store,collector.id,{now:Date.now,env:process.env,fetch,archive:r=>store.archive(r)}));
-      for(const observation of result.observations) {
-        const parsed=observationSchema.safeParse(observation);
-        if(parsed.success)observations.push(observation);else errors.push(`${collector.id}: observation schema rejected`);
-      }
-      errors.push(...result.errors);
-    }catch {errors.push(`${collector.id}: collector failed`);}
-  }
-  const now=Date.now();store.capture(observations,errors,now);
+  const {observations,errors,now}=await collectCapture(config.collectors,node.options.registry,store,{now:Date.now,env:process.env,fetch});
   const identity=node.options.identity;
   const batch=signBatch({schemaVersion:1,network:config.network,nodeId:identity.nodeId,publicKey:identity.publicKey,
     sequence:store.nextSequence(identity.nodeId),createdAt:now,observations:observations.filter(o=>allowedObservation(o,node.options.registry,now,"share"))},identity);
@@ -178,17 +166,26 @@ async function main():Promise<void> {
     }finally{database.close();}
     return;
   }
-  if(command==="shadow") {
+  if(command==="shadow"||command==="audit-sources") {
     const at=studyTime(values.at)??Date.now(),from=studyTime(values.from);
-    if(from!==undefined&&from>at)throw new Error("Shadow start must not exceed its knowledge cutoff");
-    if(values.output!==undefined&&!values.output)throw new Error("Shadow output requires a new filename");
+    const label=command==="shadow"?"Shadow":"Source audit";
+    if(from!==undefined&&from>at)throw new Error(`${label} start must not exceed its knowledge cutoff`);
+    if(values.output!==undefined&&!values.output)throw new Error(`${label} output requires a new filename`);
     const destination=values.output===undefined?null:resolve(root,values.output);
-    if(destination&&existsSync(destination))throw new Error("Shadow output already exists");
+    if(destination&&existsSync(destination))throw new Error(`${label} output already exists`);
     const config=parseConfig(readJson(configPath));
     const registry=parseRegistry(readJson(resolve(root,config.registryPath))),methodology=parseMethodology(readJson(resolve(root,config.methodologyPath)));
     if(config.network!==registry.network)throw new Error("Config and registry network mismatch");
     const database=new Database(resolve(root,config.databasePath),{readonly:true,strict:true});
     try {
+      if(command==="audit-sources") {
+        const report=await auditB200Sources(database as unknown as SqlDriver,registry,methodology,{asOf:at,expectedIntervalMs:config.intervalMs,...(from===undefined?{}:{from})});
+        if(destination)writeNew(destination,`${JSON.stringify(report,null,2)}\n`);
+        output({kind:report.kind,privacy:report.privacy,status:report.status,asOf:report.asOf,reportSaved:destination!==null,
+          publishable:false,liveMarketQualified:false,captures:report.window.captures,...report.summary,
+          comparabilityIssueCount:report.comparabilityIssues.length});
+        return;
+      }
       const report=shadowStudy(database as unknown as SqlDriver,registry,methodology,{asOf:at,expectedIntervalMs:config.intervalMs,...(from===undefined?{}:{from})});
       if(destination)writeNew(destination,`${JSON.stringify(report,null,2)}\n`);
       output({kind:report.kind,privacy:report.privacy,asOf:report.asOf,reportSaved:destination!==null,
@@ -215,7 +212,27 @@ async function main():Promise<void> {
     if(!values.target)throw new Error("restore requires --target NEW_DIRECTORY");
     output(restoreNode(resolve(root,values.input),key,resolve(root,values.target)));return;
   }
-  if(["run","collect"].includes(command)&&existsSync(resolve(root,RECOVERY_MARKER)))throw new Error("RECOVERY_REVIEW_REQUIRED: review the recovery record before enabling this node");
+  if(["run","collect","research-collect"].includes(command)&&existsSync(resolve(root,RECOVERY_MARKER)))throw new Error("RECOVERY_REVIEW_REQUIRED: review the recovery record before enabling this node");
+  if(command==="research-collect"||command==="research-health") {
+    if(command==="research-collect"&&values.at!==undefined)throw new Error("RESEARCH_COLLECTION_REQUIRES_CURRENT_TIME");
+    const config=parseConfig(readJson(configPath));
+    const registry=parseRegistry(readJson(resolve(root,config.registryPath))),methodology=parseMethodology(readJson(resolve(root,config.methodologyPath)));
+    validateResearch(config,registry,methodology);
+    if(command==="research-health") {
+      const database=new Database(resolve(root,config.databasePath),{readonly:true,strict:true});
+      try {const report=researchHealth(database as unknown as SqlDriver,config,methodology,studyTime(values.at)??Date.now());output(report);if(report.status!=="HEALTHY_RESEARCH")process.exitCode=1;}
+      finally {database.close();}
+    } else {
+      if(existsSync(resolve(root,config.databasePath))) {
+        const existing=new Database(resolve(root,config.databasePath),{readonly:true,strict:true});
+        try {validateResearchJournal(existing as unknown as SqlDriver);} finally {existing.close();}
+      }
+      const store=new Store(resolve(root,config.databasePath));
+      try {const report=await collectResearch(store,config,registry,methodology);output(report);if(report.status!=="HEALTHY_RESEARCH")process.exitCode=1;}
+      finally {store.close();}
+    }
+    return;
+  }
   // Explicit process/secret-manager values take precedence over this node's local file.
   const localEnv=resolve(root,".env");
   const credentialsPath=resolve(root,"data/credentials.json");
@@ -259,7 +276,7 @@ async function main():Promise<void> {
   }
   if(command==="providers"){output(collectorCatalog);return;}
   if(!["run","collect","status","replay","reproduce"].includes(command)) {
-    process.stdout.write("Blackwell Index node\n\nsetup [--dir PATH] [--providers oracle-public,azure-retail] [--peers https://NODE]\ncredentials COLLECTOR [ENV_NAME]   save one API key locally using hidden terminal input\nproviders              list supported adapters and key requirements\ncollect                collect real data once and sync peers\nrun                    serve API and collect continuously\nstatus                 inspect local counts, identity and readiness\nreplay --at EPOCH_MS    explore observations known at a historical time\nreproduce --sequence N reproduce an archived snapshot with its exact inputs and configuration\nstudy [--stream] [--at EPOCH_MS] [--from EPOCH_MS] [--output PRIVATE_JSON]   inspect retained captures; stdout contains counts only\nshadow [--at EPOCH_MS] [--from EPOCH_MS] [--output PRIVATE_JSON]   private B200 qualification and stress research\nbackup-keygen --output KEY_FILE\nbackup --key-file KEY_FILE --output BUNDLE_FILE\nbackup-inspect --key-file KEY_FILE --input BUNDLE_FILE\nrestore --key-file KEY_FILE --input BUNDLE_FILE --target NEW_DIRECTORY\nimport-hosted-backup --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --output BUNDLE_FILE   consume signed private export from stdin\nimport-stream-backup --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --output BUNDLE_FILE   consume private V2 source frames from stdin\nbackup-stream --operator-group GROUP --expected-node-id NODE_ID --expected-release LOCAL_BUILD_SHA --key-file KEY_FILE --output BUNDLE_FILE   back up a recovered local V2 journal\nbackup-stream-inspect --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --input BUNDLE_FILE\nrestore-stream --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --input BUNDLE_FILE --target NEW_DIRECTORY\n\nStreaming recovery accepts --max-archive-bytes. study --stream produces bounded private aggregates without point arrays.\nAll commands accept --dir and --config. No keys or synthetic prices are bundled. Recovery creates a new identity and blocks run/collect pending review.\n");return;
+    process.stdout.write("Blackwell Index node\n\nsetup [--dir PATH] [--providers oracle-public,azure-retail] [--peers https://NODE]\ncredentials COLLECTOR [ENV_NAME]   save one API key locally using hidden terminal input\nresearch-collect       collect configured public sources privately; no signer, peers or publication\nresearch-health        read current collection health; no network or credentials\nproviders              list supported adapters and key requirements\ncollect                collect real data once and sync peers\nrun                    serve API and collect continuously\nstatus                 inspect local counts, identity and readiness\nreplay --at EPOCH_MS    explore observations known at a historical time\nreproduce --sequence N reproduce an archived snapshot with its exact inputs and configuration\nstudy [--stream] [--at EPOCH_MS] [--from EPOCH_MS] [--output PRIVATE_JSON]   inspect retained captures; stdout contains counts only\nshadow [--at EPOCH_MS] [--from EPOCH_MS] [--output PRIVATE_JSON]   private B200 qualification and stress research\naudit-sources [--at EPOCH_MS] [--from EPOCH_MS] [--output PRIVATE_JSON]   verify and replay retained B200 source evidence offline\nbackup-keygen --output KEY_FILE\nbackup --key-file KEY_FILE --output BUNDLE_FILE\nbackup-inspect --key-file KEY_FILE --input BUNDLE_FILE\nrestore --key-file KEY_FILE --input BUNDLE_FILE --target NEW_DIRECTORY\nimport-hosted-backup --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --output BUNDLE_FILE   consume signed private export from stdin\nimport-stream-backup --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --output BUNDLE_FILE   consume private V2 source frames from stdin\nbackup-stream --operator-group GROUP --expected-node-id NODE_ID --expected-release LOCAL_BUILD_SHA --key-file KEY_FILE --output BUNDLE_FILE   back up a recovered local V2 journal\nbackup-stream-inspect --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --input BUNDLE_FILE\nrestore-stream --expected-node-id NODE_ID --expected-release SHA --key-file KEY_FILE --input BUNDLE_FILE --target NEW_DIRECTORY\n\nStreaming recovery accepts --max-archive-bytes. study --stream produces bounded private aggregates without point arrays.\nAll commands accept --dir and --config. No keys or synthetic prices are bundled. Recovery creates a new identity and blocks run/collect pending review.\n");return;
   }
   const {config,node,store}=load();
   if(command==="status") {output({nodeId:node.options.identity.nodeId,counts:store.counts(),coverage:store.captureCounts(),snapshot:node.snapshot(),history:store.verifyHistory()});store.close();return;}

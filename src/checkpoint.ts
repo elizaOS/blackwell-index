@@ -1,9 +1,9 @@
 /** Private durable checkpoints. All SQL cursors finish before this synchronous API returns. */
 import { randomUUID } from "node:crypto";
-import { canonical, hash } from "./crypto";
+import { canonical, canonicalByteLength, hash } from "./crypto";
 import { ARCHIVE_INTERNAL_TABLES, HOSTED_INTERNAL_TABLES, HOSTED_TABLES } from "./hosted-export";
 import { ARCHIVE_FORMAT, ARCHIVE_LIMITS, ARCHIVE_TABLES, archiveBlockHash, archiveDescriptorHash, archiveRecordKey, encodeArchiveRecord,
-  parseArchiveBlock, parseArchiveDescriptor, parseArchiveSeal, signArchiveDescriptor, signArchiveSeal, archiveCursorSchema,
+  parseArchiveDescriptor, parseArchiveSeal, signArchiveDescriptor, signArchiveSeal, archiveCursorSchema,
   type ArchiveBlock, type ArchiveCursor, type ArchiveDescriptor, type ArchiveSeal } from "./archive-protocol";
 import { JOURNAL_LIMITS, type Journal } from "./journal";
 import type { Methodology, NodeIdentity, Registry } from "./types";
@@ -24,11 +24,11 @@ const privateColumns:Record<string,readonly string[]>={
   archive_blocks:["checkpoint_id","block_number","start_cursor","end_cursor","bytes","previous_hash","hash"],
 };
 interface CheckpointRow {id:string;expires_at:number;descriptor:string;cursor:string;next_block:number;last_hash:string|null;total_bytes:number;counts:string;state:"ACTIVE"|"SEALED";seal:string|null;metadata_bytes:number}
-interface BlockRow {checkpoint_id:string;block_number:number;start_cursor:string;end_cursor:string;bytes:number;previous_hash:string|null;hash:string}
+
 function count(journal:Journal,sql:string,...bindings:unknown[]):number {const value=(journal.db.query(sql).get(...bindings) as {count:number}).count;if(!Number.isSafeInteger(value)||value<0)throw new Error("ARCHIVE_COUNT_INVALID");return value;}
 function time(now:number):void {if(!Number.isSafeInteger(now)||now<1||now>8_640_000_000_000_000-ARCHIVE_LIMITS.maxTtlMs)throw new Error("ARCHIVE_CLOCK_INVALID");}
-function match(table:(typeof ARCHIVE_TABLES)[number],row="t",entry="a"):string {
-  return `${entry}.key_text=${table.keyText?`${row}.${table.keyText}`:"''"} AND ${entry}.key_integer=${table.keyInteger?`${row}.${table.keyInteger}`:"0"}`;
+function match(table:(typeof ARCHIVE_TABLES)[number]):string {
+  return `a.key_text=${table.keyText?`t.${table.keyText}`:"''"} AND a.key_integer=${table.keyInteger?`t.${table.keyInteger}`:"0"}`;
 }
 function schema(journal:Journal,includePrivate=true):void {
   const names=(journal.db.query("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[]).map(row=>row.name);
@@ -176,8 +176,10 @@ function generate(journal:Journal,descriptor:ArchiveDescriptor,index:number,prev
     const available=Math.max(0,Math.floor((ARCHIVE_LIMITS.transportBytes-envelopeBytes-headerBytes-4)/4)*3);
     const size=Math.min(encoded.byteLength-cursor.offset,ARCHIVE_LIMITS.blockBytes-bytes,available);
     if(size===0)break;
-    const fragment={...header,data:Buffer.from(encoded.subarray(cursor.offset,cursor.offset+size)).toString("base64")};
-    fragments.push(fragment);bytes+=size;envelopeBytes+=Buffer.byteLength(canonical(fragment))+1;
+    const fragment={...header,data:Buffer.from(encoded.buffer,encoded.byteOffset+cursor.offset,size).toString("base64")};
+    // Base64 is ASCII without JSON escapes: the empty-data header plus its
+    // length is the exact serialized size, without copying/serializing the body.
+    fragments.push(fragment);bytes+=size;envelopeBytes+=headerBytes+fragment.data.length;
     const complete=cursor.offset+size===encoded.byteLength;
     if(complete)counts[cursor.table]=counts[cursor.table]!+1;
     cursor={table:cursor.table,position,offset:complete?0:cursor.offset+size};
@@ -186,7 +188,11 @@ function generate(journal:Journal,descriptor:ArchiveDescriptor,index:number,prev
   cursor=normalize(journal,descriptor,cursor);
   if(!fragments.length) {if(cursor.table!==ARCHIVE_TABLES.length)throw new Error("ARCHIVE_BLOCK_CANNOT_PROGRESS");return {block:null,bytes:0,counts};}
   const unsigned={checkpointId:descriptor.payload.checkpointId,descriptorHash:archiveDescriptorHash(descriptor),index,previousHash,start,end:cursor,fragments};
-  const block={...unsigned,hash:archiveBlockHash(unsigned)};parseArchiveBlock(block,descriptor,{index,previousHash,cursor:start});return {block,bytes,counts};
+  const block={...unsigned,hash:archiveBlockHash(unsigned)};
+  // Rows and fragment sizes were validated during construction. Check the final
+  // wire budget without cloning and decoding the entire newly generated block.
+  if(canonicalByteLength(block)>ARCHIVE_LIMITS.transportBytes)throw new Error("ARCHIVE_ENVELOPE_TOO_LARGE");
+  return {block,bytes,counts};
 }
 /** Retry metadata and advancement commit atomically; no in-memory state survives between calls. */
 export function readCheckpointBlock(journal:Journal,identity:NodeIdentity,source:CheckpointSource,id:string,index:number,now=Date.now()):ArchiveBlock|null {
@@ -194,7 +200,7 @@ export function readCheckpointBlock(journal:Journal,identity:NodeIdentity,source
   return journal.db.transaction(()=>{
     const {row,descriptor}=load(journal,identity,source,id,now);
     if(index>row.next_block)throw new Error("ARCHIVE_BLOCK_ORDER_MISMATCH");
-    const saved=journal.db.query("SELECT * FROM archive_blocks WHERE checkpoint_id=? AND block_number=?").get(id,index) as BlockRow|null;
+    const saved=journal.db.query("SELECT * FROM archive_blocks WHERE checkpoint_id=? AND block_number=?").get(id,index) as {checkpoint_id:string;block_number:number;start_cursor:string;end_cursor:string;bytes:number;previous_hash:string|null;hash:string }|null;
     if(index<row.next_block) {
       if(!saved)throw new Error("ARCHIVE_BLOCK_METADATA_MISSING");
       const result=generate(journal,descriptor,index,saved.previous_hash,archiveCursorSchema.parse(JSON.parse(saved.start_cursor)));
