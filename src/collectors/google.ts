@@ -3,7 +3,7 @@ import { fromMicros, normalizeInstance } from "../decimal";
 import { MODELS, type Collector, type CollectorContext, type CollectorResult, type GpuModel, type Procurement } from "../types";
 import { array, CollectionError, failure, jsonRequest, object, positiveInteger, string, timestamp } from "./http";
 
-interface Component { skuId: string; quantity: number; usageUnit: string; usageType: string }
+interface Component { skuId: string; description: string; quantity: number; usageUnit: string; usageType: string }
 interface Machine { model: GpuModel; sku: string; region: string; gpuCount: number; procurement: Procurement; includes: string[]; components: Component[] }
 interface CatalogSku { record: Record<string, unknown>; hash: string; observedAt: number; sourceUrl: string }
 const MACHINES: Record<string, { model: GpuModel; gpuCount: number }> = {
@@ -24,7 +24,8 @@ function parseMappings(raw: string | undefined): Machine[] {
       const component = object(value);
       const usageUnit = string(component.usageUnit);
       if (!/^(h|[A-Za-z]+\.h)$/.test(usageUnit)) throw new CollectionError("INVALID_MAPPING", "Only hourly component units are supported");
-      return { skuId: string(component.skuId), quantity: positiveInteger(component.quantity, "component.quantity"), usageUnit, usageType: string(component.usageType) };
+      if (typeof component.description !== "string" || !component.description.trim()) throw new CollectionError("INVALID_MAPPING", "Each Google component requires its reviewed exact catalog description");
+      return { skuId: string(component.skuId), description: component.description, quantity: positiveInteger(component.quantity, "component.quantity"), usageUnit, usageType: string(component.usageType) };
     });
     if (!components.length || components.length > 20 || new Set(components.map(x => x.skuId)).size !== components.length) throw new CollectionError("INVALID_MAPPING", "Expected 1–20 unique billing components");
     const sku = string(item.sku);
@@ -74,6 +75,9 @@ export async function discoverGoogleCatalog(context: CollectorContext, key: stri
 
 function componentRate(part: CatalogSku, component: Component, region: string) {
   const record = part.record;
+  // Google uses OnDemand for some Spot and scheduled SKUs as well.
+  // Pin the reviewed description rather than infer procurement from that category.
+  if (record.description !== component.description) throw new CollectionError("MAPPING_MISMATCH", `Google SKU ${component.skuId} description changed; review procurement and bundle identity`);
   if (!array(record.serviceRegions).includes(region)) throw new CollectionError("MAPPING_MISMATCH", `Google SKU ${component.skuId} is not offered in configured region`);
   if (object(record.category).usageType !== component.usageType) throw new CollectionError("MAPPING_MISMATCH", `Google SKU ${component.skuId} consumption model changed`);
   const eligible = array(record.pricingInfo).map(value => object(value)).map(value => ({ value, effectiveAt: timestamp(value.effectiveTime) })).filter(value => value.effectiveAt !== null && value.effectiveAt <= part.observedAt).sort((a, b) => b.effectiveAt! - a.effectiveAt!);

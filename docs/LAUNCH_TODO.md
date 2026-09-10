@@ -2,6 +2,24 @@
 
 This checklist is the completion contract for the public oracle. Software tests, a running website and registered domains do not satisfy external publisher or data requirements.
 
+## September 10 access update
+
+This dated update supersedes the credential status in the original checklist below. Credentials remain private and have not been installed into hosted nodes by this setup workflow.
+
+| Source | Verified access | Remaining work |
+| --- | --- | --- |
+| AWS | Dedicated non-console principal with only catalog and instance-type read permissions; live collector probe produced 34 B200/B300 observations after zero-rate and hourly-unit handling fixes | Release the reviewed collector fix; verify GB300 hardware; investigate GB200 zero-rate catalog entries; approve source rights |
+| Google | API-restricted key; complete discovery returned 32,873 SKUs over eight successful requests, including 136 Blackwell/A4 candidates | Review SKU components, units, quantities, region and procurement mappings before composing prices |
+| Hyperstack | Live collector returned two B200/B300 observations and no errors | Review account-level key exposure, source rights and hosted installation |
+| Vast | Scoped key saved; one bounded offer query succeeded | Scope includes misc write operations; complete collector validation and obtain required automated-compilation/publication rights |
+| Prime Intellect | Availability-read key; four successful model queries returned no offers | Replace or renew key before October 10, 2026; validate actual quotes when available and approve source rights |
+| Lambda | Account accessible; key generation blocked by payment requirement | Resolve account/billing or obtain catalog-only access; no payment or key creation performed |
+| Shadeform | Sign-in encountered a redirect loop | Resolve authentication; verify catalog-only access and currency evidence |
+
+Catalog responses were inspected in memory for these access checks, not retained as a licensed historical dataset or published. These results do not establish available capacity, source rights, independent operators or Pyth publisher admission.
+
+## Original launch checklist
+
 | Requirement | Current evidence | Next action |
 | --- | --- | --- |
 | Four domains | Purchased for $78.06; DNS, HTTPS, both sites and canonical redirects verified | Assign renewal owner; automatic renewal is off |

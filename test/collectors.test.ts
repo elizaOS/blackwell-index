@@ -162,6 +162,47 @@ describe("AWS official SDK transport", () => {
     expect(JSON.stringify(result)).not.toContain("unit-test-secret");
     expect(JSON.stringify(evidence.map(x => ({ url: x.url, body: new TextDecoder().decode(x.body) })))).not.toContain("unit-test-session-token");
   });
+  test("zero catalog rates do not discard positive quotes; invalid rates still fail closed", async () => {
+    for (const rate of ["0", "0.0000000000", "-1", "garbage"]) {
+      const { ctx } = awsContext();
+      const original = ctx.fetch;
+      ctx.fetch = (async (input, init) => {
+        const response = await original(input, init);
+        const body = await response.json() as { PriceList: string[] };
+        if (body.PriceList.length) {
+          const item = JSON.parse(body.PriceList[0]!);
+          item.product.sku = "extra-product";
+          item.terms.OnDemand["test-term"].priceDimensions["test-rate"].pricePerUnit.USD = rate;
+          body.PriceList.unshift(JSON.stringify(item));
+        }
+        return json(body);
+      }) as typeof fetch;
+      const result = await collect("aws-pricing", ctx);
+      expect(result.observations).toHaveLength(rate.startsWith("0") ? 1 : 0);
+      if (rate.startsWith("0")) expect(result.observations[0]!.price).toBe("12.355000");
+      else expect(result.errors.some(error => error.startsWith("INVALID_PRICE"))).toBe(true);
+    }
+  });
+  test("accepts AWS Hours spelling but rejects non-hour units", async () => {
+    for (const unit of ["Hours", "Seconds", "GPUHours", ["Hours"], null]) {
+      const { ctx } = awsContext();
+      const original = ctx.fetch;
+      ctx.fetch = (async (input, init) => {
+        const response = await original(input, init);
+        const body = await response.json() as { PriceList: string[] };
+        body.PriceList = body.PriceList.map(raw => {
+          const item = JSON.parse(raw);
+          item.terms.OnDemand["test-term"].priceDimensions["test-rate"].unit = unit;
+          return JSON.stringify(item);
+        });
+        return json(body);
+      }) as typeof fetch;
+      const result = await collect("aws-pricing", ctx);
+      expect(result.observations).toHaveLength(unit === "Hours" ? 1 : 0);
+      if (unit === "Hours") expect(result.observations[0]!.instancePrice).toBe("98.840000");
+      else expect(result.errors.some(error => error.startsWith("UNSUPPORTED_UNIT"))).toBe(true);
+    }
+  });
   test("rejects changed accelerator count instead of publishing incorrect normalization", async () => {
     const { ctx } = awsContext("4");
     const result = await collect("aws-pricing", ctx);
@@ -209,10 +250,10 @@ describe("AWS official SDK transport", () => {
 
 describe("Google billing composition", () => {
   const mapping = { model: "B200", sku: "a4-highgpu-8g", gpuCount: 8, region: "us-central1", procurement: "ON_DEMAND", includes: ["gpu", "cpu"], components: [
-    { skuId: "test-gpu", quantity: 8, usageUnit: "h", usageType: "OnDemand" },
-    { skuId: "test-cpu", quantity: 224, usageUnit: "h", usageType: "OnDemand" },
+    { skuId: "test-gpu", description: "test-gpu reviewed description", quantity: 8, usageUnit: "h", usageType: "OnDemand" },
+    { skuId: "test-cpu", description: "test-cpu reviewed description", quantity: 224, usageUnit: "h", usageType: "OnDemand" },
   ] };
-  const sku = (id: string, units: string, nanos: number) => ({ skuId: id, category: { usageType: "OnDemand" }, serviceRegions: ["us-central1"], pricingInfo: [{ effectiveTime: "2026-01-01T00:00:00Z", pricingExpression: { usageUnit: "h", tieredRates: [{ startUsageAmount: 0, unitPrice: { currencyCode: "USD", units, nanos } }] } }] });
+  const sku = (id: string, units: string, nanos: number) => ({ skuId: id, description: `${id} reviewed description`, category: { usageType: "OnDemand" }, serviceRegions: ["us-central1"], pricingInfo: [{ effectiveTime: "2026-01-01T00:00:00Z", pricingExpression: { usageUnit: "h", tieredRates: [{ startUsageAmount: 0, unitPrice: { currencyCode: "USD", units, nanos } }] } }] });
   function googleContext(map: unknown = [mapping], missingCpu = false) {
     return context(url => {
       if (url.pathname === "/v1/services") return json({ services: [{ displayName: "Compute Engine", name: "services/TEST-COMPUTE" }] });
@@ -230,6 +271,21 @@ describe("Google billing composition", () => {
     expect(receipt.type).toBe("GOOGLE_BILLING_COMPOSITION_V1");
     expect(receipt.components.map((x: { responseHash: string }) => x.responseHash)).toEqual([evidence[1]!.hash, evidence[2]!.hash]);
     expect(evidence.every(x => !x.url.includes("unit-test-google-secret"))).toBe(true);
+  });
+  test("description drift fails closed even when usage type stays OnDemand", async () => {
+    const changed = { ...mapping, components: mapping.components.map(c => ({ ...c, description: `Spot ${c.description}` })) };
+    const { ctx } = googleContext([changed]);
+    const result = await collect("google-billing", ctx);
+    expect(result.observations).toEqual([]);
+    expect(result.errors[0]).toContain("MAPPING_MISMATCH");
+  });
+  test("missing reviewed descriptions fail before catalog access", async () => {
+    const incomplete = { ...mapping, components: mapping.components.map(({ description, ...c }) => c) };
+    const { ctx, requests } = googleContext([incomplete]);
+    const result = await collect("google-billing", ctx);
+    expect(result.observations).toEqual([]);
+    expect(result.errors[0]).toContain("INVALID_MAPPING");
+    expect(requests).toHaveLength(0);
   });
   test("catalog discovery without a reviewed map produces evidence and no assumed GPU price", async () => {
     const { ctx, evidence } = googleContext(null);
