@@ -74,8 +74,12 @@ export const aws: Collector = {
                   const dimensions = Object.values(object(term.priceDimensions)).map(value => object(value));
                   if (dimensions.length !== 1) throw new CollectionError("UNSUPPORTED_TIERS", `AWS ${mapping.sku}`);
                   const dimension = dimensions[0]!;
-                  if (dimension.unit !== "Hrs" || dimension.beginRange !== "0" || dimension.endRange !== "Inf") throw new CollectionError("UNSUPPORTED_UNIT", `AWS ${mapping.sku} requires flat instance-hours`);
-                  const instancePrice = fromMicros(toMicros(decimal(object(dimension.pricePerUnit).USD)));
+                  if ((dimension.unit !== "Hrs" && dimension.unit !== "Hours") || dimension.beginRange !== "0" || dimension.endRange !== "Inf") throw new CollectionError("UNSUPPORTED_UNIT", `AWS ${mapping.sku} requires flat instance-hours`);
+                  const rawPrice = object(dimension.pricePerUnit).USD;
+                  // Explicit zero catalog entries are not paid-compute quotes.
+                  // Malformed and negative rates must still fail closed.
+                  if (typeof rawPrice === "string" && /^0+(?:\.0+)?$/.test(rawPrice)) continue;
+                  const instancePrice = fromMicros(toMicros(decimal(rawPrice)));
                   const capacityBlock = termKind === "CapacityBlock" || attrs.marketoption === "CapacityBlock" || /capacity.?block/i.test(String(attrs.usagetype)) || /capacity block/i.test(String(dimension.description));
                   const procurement: Procurement = capacityBlock ? "CAPACITY_BLOCK" : "ON_DEMAND";
                   observations.push({

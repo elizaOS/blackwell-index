@@ -162,6 +162,47 @@ describe("AWS official SDK transport", () => {
     expect(JSON.stringify(result)).not.toContain("unit-test-secret");
     expect(JSON.stringify(evidence.map(x => ({ url: x.url, body: new TextDecoder().decode(x.body) })))).not.toContain("unit-test-session-token");
   });
+  test("zero catalog rates do not discard positive quotes; invalid rates still fail closed", async () => {
+    for (const rate of ["0", "0.0000000000", "-1", "garbage"]) {
+      const { ctx } = awsContext();
+      const original = ctx.fetch;
+      ctx.fetch = (async (input, init) => {
+        const response = await original(input, init);
+        const body = await response.json() as { PriceList: string[] };
+        if (body.PriceList.length) {
+          const item = JSON.parse(body.PriceList[0]!);
+          item.product.sku = "extra-product";
+          item.terms.OnDemand["test-term"].priceDimensions["test-rate"].pricePerUnit.USD = rate;
+          body.PriceList.unshift(JSON.stringify(item));
+        }
+        return json(body);
+      }) as typeof fetch;
+      const result = await collect("aws-pricing", ctx);
+      expect(result.observations).toHaveLength(rate.startsWith("0") ? 1 : 0);
+      if (rate.startsWith("0")) expect(result.observations[0]!.price).toBe("12.355000");
+      else expect(result.errors.some(error => error.startsWith("INVALID_PRICE"))).toBe(true);
+    }
+  });
+  test("accepts AWS Hours spelling but rejects non-hour units", async () => {
+    for (const unit of ["Hours", "Seconds", "GPUHours", ["Hours"], null]) {
+      const { ctx } = awsContext();
+      const original = ctx.fetch;
+      ctx.fetch = (async (input, init) => {
+        const response = await original(input, init);
+        const body = await response.json() as { PriceList: string[] };
+        body.PriceList = body.PriceList.map(raw => {
+          const item = JSON.parse(raw);
+          item.terms.OnDemand["test-term"].priceDimensions["test-rate"].unit = unit;
+          return JSON.stringify(item);
+        });
+        return json(body);
+      }) as typeof fetch;
+      const result = await collect("aws-pricing", ctx);
+      expect(result.observations).toHaveLength(unit === "Hours" ? 1 : 0);
+      if (unit === "Hours") expect(result.observations[0]!.instancePrice).toBe("98.840000");
+      else expect(result.errors.some(error => error.startsWith("UNSUPPORTED_UNIT"))).toBe(true);
+    }
+  });
   test("rejects changed accelerator count instead of publishing incorrect normalization", async () => {
     const { ctx } = awsContext("4");
     const result = await collect("aws-pricing", ctx);
