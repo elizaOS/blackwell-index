@@ -250,10 +250,10 @@ describe("AWS official SDK transport", () => {
 
 describe("Google billing composition", () => {
   const mapping = { model: "B200", sku: "a4-highgpu-8g", gpuCount: 8, region: "us-central1", procurement: "ON_DEMAND", includes: ["gpu", "cpu"], components: [
-    { skuId: "test-gpu", quantity: 8, usageUnit: "h", usageType: "OnDemand" },
-    { skuId: "test-cpu", quantity: 224, usageUnit: "h", usageType: "OnDemand" },
+    { skuId: "test-gpu", description: "test-gpu reviewed description", quantity: 8, usageUnit: "h", usageType: "OnDemand" },
+    { skuId: "test-cpu", description: "test-cpu reviewed description", quantity: 224, usageUnit: "h", usageType: "OnDemand" },
   ] };
-  const sku = (id: string, units: string, nanos: number) => ({ skuId: id, category: { usageType: "OnDemand" }, serviceRegions: ["us-central1"], pricingInfo: [{ effectiveTime: "2026-01-01T00:00:00Z", pricingExpression: { usageUnit: "h", tieredRates: [{ startUsageAmount: 0, unitPrice: { currencyCode: "USD", units, nanos } }] } }] });
+  const sku = (id: string, units: string, nanos: number) => ({ skuId: id, description: `${id} reviewed description`, category: { usageType: "OnDemand" }, serviceRegions: ["us-central1"], pricingInfo: [{ effectiveTime: "2026-01-01T00:00:00Z", pricingExpression: { usageUnit: "h", tieredRates: [{ startUsageAmount: 0, unitPrice: { currencyCode: "USD", units, nanos } }] } }] });
   function googleContext(map: unknown = [mapping], missingCpu = false) {
     return context(url => {
       if (url.pathname === "/v1/services") return json({ services: [{ displayName: "Compute Engine", name: "services/TEST-COMPUTE" }] });
@@ -271,6 +271,21 @@ describe("Google billing composition", () => {
     expect(receipt.type).toBe("GOOGLE_BILLING_COMPOSITION_V1");
     expect(receipt.components.map((x: { responseHash: string }) => x.responseHash)).toEqual([evidence[1]!.hash, evidence[2]!.hash]);
     expect(evidence.every(x => !x.url.includes("unit-test-google-secret"))).toBe(true);
+  });
+  test("description drift fails closed even when usage type stays OnDemand", async () => {
+    const changed = { ...mapping, components: mapping.components.map(c => ({ ...c, description: `Spot ${c.description}` })) };
+    const { ctx } = googleContext([changed]);
+    const result = await collect("google-billing", ctx);
+    expect(result.observations).toEqual([]);
+    expect(result.errors[0]).toContain("MAPPING_MISMATCH");
+  });
+  test("missing reviewed descriptions fail before catalog access", async () => {
+    const incomplete = { ...mapping, components: mapping.components.map(({ description, ...c }) => c) };
+    const { ctx, requests } = googleContext([incomplete]);
+    const result = await collect("google-billing", ctx);
+    expect(result.observations).toEqual([]);
+    expect(result.errors[0]).toContain("INVALID_MAPPING");
+    expect(requests).toHaveLength(0);
   });
   test("catalog discovery without a reviewed map produces evidence and no assumed GPU price", async () => {
     const { ctx, evidence } = googleContext(null);

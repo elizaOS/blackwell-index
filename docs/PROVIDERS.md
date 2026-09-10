@@ -90,6 +90,8 @@ Verified normalized mappings cover `p6-b200.48xlarge` and `p6-b300.48xlarge` at 
 
 ### Google catalog setup
 
+Each billing component also requires an exact reviewed `description` from the catalog. Missing descriptions fail before network access; changed descriptions invalidate the bundle. This is required because Google may label Spot and scheduled SKUs with the same `OnDemand` usage type. Existing mappings without descriptions must be reviewed and updated, not automatically migrated. See the [catalog mapping review](GOOGLE_CATALOG_REVIEW.md).
+
 Enable Cloud Billing API in a Google Cloud project and create an API key restricted to that API. Set `GOOGLE_CLOUD_BILLING_API_KEY`. Without an instance map, `google-billing` discovers the Compute Engine service, archives every page of its official SKU catalog, and returns `NO_MAPPING`. It does not reinterpret a GPU-only billing component as a full VM price.
 
 After reviewing real catalog responses, set `GOOGLE_BILLING_SKU_MAP_JSON` to an array of machine mappings. Each mapping needs `model`, `sku`, `region`, `gpuCount`, `procurement`, `includes`, and a `components` array. Each component contains the actual catalog `skuId`, a positive integer `quantity` per VM, the exact hourly `usageUnit`, and exact `usageType`. Supported hardware mappings are A4 B200 with eight GPUs, A4X GB200 with four GPUs, and A4X Max GB300 with four GPUs. Billing components and actual procurement classes still require provider confirmation; no default components or fabricated SKU IDs are shipped.
