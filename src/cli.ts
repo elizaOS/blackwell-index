@@ -59,7 +59,7 @@ async function collect(config:NodeConfig,node:OracleNode,store:Store):Promise<vo
   const observations:Observation[]=[],errors:string[]=[];
   for(const collector of createCollectors(config.collectors)) {
     const provider=node.options.registry.providers.find(p=>p.id===collector.provider);
-    if(!provider?.rights.collect||(provider.rights.expiresAt!==null&&provider.rights.expiresAt<Date.now())) {errors.push(`${collector.id}: collection permission not configured`);continue;}
+    if(!provider?.rights.collect||(provider.rights.expiresAt!==null&&provider.rights.expiresAt<=Date.now())) {errors.push(`${collector.id}: collection permission not configured`);continue;}
     const schedule=collectorSchedule(store,collector.id);
     if(!schedule.eligible){errors.push(`${collector.id}: ${schedule.code}; nextAttemptAt=${schedule.nextAttemptAt}`);continue;}
     try {

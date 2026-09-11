@@ -1,4 +1,5 @@
 import { fromMicros, normalizeInstance, toMicros } from "../decimal";
+import { hash } from "../crypto";
 import type { Collector, CollectorResult } from "../types";
 import { array, CollectionError, decimal, failure, jsonRequest, object, positiveInteger, string } from "./http";
 import { blackwellModel } from "./models";
@@ -17,15 +18,19 @@ export const vast: Collector = {
       });
       const rows = array(object(response.data).offers);
       if (rows.length >= LIMIT) throw new CollectionError("INCOMPLETE_COVERAGE", "Vast reached the response limit; refine queries before publishing");
-      const seen = new Set<string>();
+      const seen = new Map<string, string>();
       for (const value of rows) {
         const row = object(value);
         const model = blackwellModel(row.gpu_name);
         if (!model || row.rentable !== true || row.rented !== false || row.is_bid !== false || row.verification !== "verified") continue;
         try {
           const id = String(positiveInteger(row.id, "id"));
-          if (seen.has(id)) continue;
-          seen.add(id);
+          const fingerprint = hash(row), previous = seen.get(id);
+          if (previous !== undefined) {
+            if (previous !== fingerprint) return { observations: [], errors: ["AMBIGUOUS_PRICE: Vast repeated an offer ID with conflicting fields"] };
+            continue;
+          }
+          seen.set(id, fingerprint);
           const gpuCount = positiveInteger(row.num_gpus, "num_gpus");
           // Until the provider confirms partial-host vs fractional-GPU semantics, only complete resource offers enter this collector.
           if (row.gpu_frac !== 1) throw new CollectionError("UNVERIFIED_TENANCY", `vast offer ${id}`);
