@@ -20,6 +20,8 @@ Quantity is exact integer GPU-milliseconds. VWAP is total net compute charges di
 
 The report includes exclusion counts, concentration, effective provider count, coverage failures and leave-one-provider-out VWAP values. It deliberately omits buyer/deal identifiers. All values remain confidential and non-publishable. A coverage pass returns `RESEARCH_ONLY`, never production readiness. Coverage failures retain explicitly labeled candidate diagnostics for private analysis, never a public feed value.
 
+Input/configuration hashes and the winsorization parameter bind each report to its private inputs. Hashes establish reproducibility, not source authenticity. Segment overlap checks sort intervals; leave-one-provider-out VWAP uses group totals rather than repeatedly sorting the full dataset.
+
 ## Running
 
 Run `bun run research:transactions /absolute/private/records.json /absolute/private/config.json /absolute/private/new-report.json`.

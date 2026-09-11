@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { fromMicros, toMicros } from "./decimal";
+import { hash } from "./crypto";
 
 const id = z.string().min(1).max(256);
 const timestamp = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -48,7 +49,7 @@ export const ResearchConfig = z.object({
   maxBuyerShareBps: z.number().int().min(1).max(10000),
   winsorBps: z.number().int().min(0).max(4999),
   permissions: z.array(z.object({source: id, agreementId: id, evidenceHash: digest,
-    evaluationAllowed: z.literal(true), validFrom: timestamp, expiresAt: timestamp}).strict()),
+    evaluationAllowed: z.literal(true), validFrom: timestamp, expiresAt: timestamp}).strict()).max(256),
 }).strict().superRefine((c, ctx) => {
   if (c.windowStart >= c.windowEnd || c.windowEnd > c.asOf) ctx.addIssue({code:"custom", message:"Invalid research window"});
   if (new Set(c.permissions.map(p => p.source)).size !== c.permissions.length) ctx.addIssue({code:"custom", message:"Duplicate permission source"});
@@ -82,9 +83,10 @@ export function analyzeTransactions(input: unknown, settings: unknown) {
   const reject = (reason: string) => { excluded[reason] = (excluded[reason] ?? 0)+1; };
   const latest = new Map<string,Transaction>();
   const seenRevisions = new Set<string>();
+  const permissions = new Map(c.permissions.map(permission=>[permission.source,permission]));
   for (const r of records) {
     if (r.recordedAt > c.asOf) { reject("AFTER_AS_OF"); continue; }
-    const permission = c.permissions.find(p => p.source === r.source);
+    const permission = permissions.get(r.source);
     if (!permission || permission.validFrom > c.asOf || permission.expiresAt <= c.asOf) throw new Error("Missing current evaluation permission for input source");
     const key = JSON.stringify([r.economicProvider,r.dealId,r.segmentId]);
     const revisionKey = JSON.stringify([key,r.revision]);
@@ -108,12 +110,17 @@ export function analyzeTransactions(input: unknown, settings: unknown) {
     if (!charge) { reject("ZERO_NET_CHARGE"); continue; }
     const intervalKey = JSON.stringify([r.economicProvider,r.dealId]);
     const previous = intervals.get(intervalKey) ?? [];
-    if (previous.some(p => r.serviceStart < p.serviceEnd && r.serviceEnd > p.serviceStart)) throw new Error("Overlapping deal segments require upstream reconciliation");
     previous.push(r); intervals.set(intervalKey,previous);
     const volume = BigInt(r.gpuCount)*BigInt(r.serviceEnd-r.serviceStart);
     const price = round(charge*3600000n,volume);
     if (!price) { reject("BELOW_PRICE_PRECISION"); continue; }
     points.push({record:r,volume,charge,price});
+  }
+  for (const segments of intervals.values()) {
+    segments.sort((a,b)=>a.serviceStart-b.serviceStart);
+    for (let i=1;i<segments.length;i++) {
+      if (segments[i]!.serviceStart<segments[i-1]!.serviceEnd) throw new Error("Overlapping deal segments require upstream reconciliation");
+    }
   }
   const volume = points.reduce((s,p)=>s+p.volume,0n);
   const shares = (key: "economicProvider" | "buyerId") => {
@@ -130,11 +137,19 @@ export function analyzeTransactions(input: unknown, settings: unknown) {
   if (volume && max(providers)*10000n>volume*BigInt(c.maxProviderShareBps)) reasons.push("PROVIDER_CONCENTRATION");
   if (volume && max(buyers)*10000n>volume*BigInt(c.maxBuyerShareBps)) reasons.push("BUYER_CONCENTRATION");
   const candidate = points.length ? estimates(points,c.winsorBps) : null;
-  const leaveOneProviderOut = [...new Set(points.map(p=>p.record.economicProvider))].map(group => {
-    const remaining = points.filter(p=>p.record.economicProvider!==group);
-    return remaining.length ? estimates(remaining,c.winsorBps).vwap : null;
+  const totalCharge = points.reduce((sum,p)=>sum+p.charge,0n);
+  const providerTotals = new Map<string,{volume:bigint;charge:bigint}>();
+  for (const p of points) {
+    const total=providerTotals.get(p.record.economicProvider)??{volume:0n,charge:0n};
+    total.volume+=p.volume;total.charge+=p.charge;
+    providerTotals.set(p.record.economicProvider,total);
+  }
+  const leaveOneProviderOut = [...providerTotals.values()].map(total => {
+    const remainingVolume=volume-total.volume;
+    return remainingVolume ? fromMicros(round((totalCharge-total.charge)*3600000n,remainingVolume)) : null;
   });
   return {schemaVersion:1, purpose:"PRIVATE_RESEARCH", publishable:false,
+    inputHash:hash(records), configurationHash:hash(c), winsorBps:c.winsorBps,
     status:reasons.length?"INSUFFICIENT_DATA":"RESEARCH_ONLY", reasons,
     windowStart:c.windowStart, windowEnd:c.windowEnd, asOf:c.asOf,
     inputRecords:records.length, supersededRecords:records.length-(excluded.AFTER_AS_OF??0)-latest.size,

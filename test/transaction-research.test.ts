@@ -19,6 +19,9 @@ describe("private transaction research", () => {
     expect(report.leaveOneProviderOut).toEqual(["4.000000","2.000000"]);
     expect(report.publishable).toBe(false);
     expect(report.status).toBe("RESEARCH_ONLY");
+    expect(report.configurationHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(report.inputHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(report.winsorBps).toBe(500);
     expect(JSON.stringify(report)).not.toContain("buyer-a");
   });
   test("empty input is unavailable, not zero price", () => {
@@ -60,6 +63,10 @@ describe("private transaction research", () => {
   });
   test("overlapping segments require upstream allocation", () => {
     expect(()=>analyzeTransactions([record(),record({segmentId:"second",serviceStart:1800000,serviceEnd:5400000})],config())).toThrow("Overlapping");
+  });
+  test("adjacent segments remain valid in reverse input order", () => {
+    const r=analyzeTransactions([record({segmentId:"second",serviceStart:3600000,serviceEnd:7200000}),record()],config());
+    expect(r.acceptedSegments).toBe(2);
   });
   test("partial windows are not silently prorated", () => {
     const r=analyzeTransactions(pair(),config({windowStart:1000}));
