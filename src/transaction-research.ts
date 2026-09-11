@@ -76,8 +76,9 @@ function estimates(points: Point[], winsorBps: number) {
   };
 }
 
-export function analyzeTransactions(input: unknown, settings: unknown) {
+export function analyzeTransactions(input: unknown, settings: unknown, evaluationTime = Date.now()) {
   const c = ResearchConfig.parse(settings);
+  if (!Number.isSafeInteger(evaluationTime) || evaluationTime < c.asOf) throw new Error("Invalid evaluation time");
   const records = z.array(TransactionRecord).max(100000).parse(input);
   const excluded: Record<string,number> = {};
   const reject = (reason: string) => { excluded[reason] = (excluded[reason] ?? 0)+1; };
@@ -87,7 +88,7 @@ export function analyzeTransactions(input: unknown, settings: unknown) {
   for (const r of records) {
     if (r.recordedAt > c.asOf) { reject("AFTER_AS_OF"); continue; }
     const permission = permissions.get(r.source);
-    if (!permission || permission.validFrom > c.asOf || permission.expiresAt <= c.asOf) throw new Error("Missing current evaluation permission for input source");
+    if (!permission || permission.validFrom > evaluationTime || permission.expiresAt <= evaluationTime) throw new Error("Missing current evaluation permission for input source");
     const key = JSON.stringify([r.economicProvider,r.dealId,r.segmentId]);
     const revisionKey = JSON.stringify([key,r.revision]);
     if (seenRevisions.has(revisionKey)) throw new Error("Duplicate or conflicting deal segment revision");
@@ -151,7 +152,7 @@ export function analyzeTransactions(input: unknown, settings: unknown) {
   return {schemaVersion:1, purpose:"PRIVATE_RESEARCH", publishable:false,
     inputHash:hash(records), configurationHash:hash(c), winsorBps:c.winsorBps,
     status:reasons.length?"INSUFFICIENT_DATA":"RESEARCH_ONLY", reasons,
-    windowStart:c.windowStart, windowEnd:c.windowEnd, asOf:c.asOf,
+    windowStart:c.windowStart, windowEnd:c.windowEnd, asOf:c.asOf, evaluationTime,
     inputRecords:records.length, supersededRecords:records.length-(excluded.AFTER_AS_OF??0)-latest.size,
     acceptedSegments:points.length, excluded, providerCount:providers.length, buyerCount:buyers.length,
     gpuMilliseconds:volume.toString(),
@@ -165,7 +166,7 @@ export function analyzeTransactions(input: unknown, settings: unknown) {
 }
 
 /** Explicit as-of windows prevent later invoice corrections leaking into earlier estimates. */
-export function backtestTransactions(input: unknown, configurations: unknown) {
+export function backtestTransactions(input: unknown, configurations: unknown, evaluationTime = Date.now()) {
   const configs = z.array(ResearchConfig).min(1).max(366).parse(configurations);
   const first = configs[0]!;
   for (let i=0;i<configs.length;i++) {
@@ -173,7 +174,7 @@ export function backtestTransactions(input: unknown, configurations: unknown) {
     if (["model","region","bundle","topology","procurement","minimumEvidence","winsorBps","minProviders","minBuyers","minGpuHours","maxProviderShareBps","maxBuyerShareBps"].some(key => c[key as keyof typeof c]!==first[key as keyof typeof first])) throw new Error("Backtest cohort and parameters must remain fixed");
     if (i && c.windowStart < configs[i-1]!.windowEnd) throw new Error("Backtest windows must be ordered and non-overlapping");
   }
-  const windows = configs.map(c=>analyzeTransactions(input,c));
+  const windows = configs.map(c=>analyzeTransactions(input,c,evaluationTime));
   const missingWindows = windows.filter(w=>w.status==="INSUFFICIENT_DATA").length;
   return {schemaVersion:1,purpose:"PRIVATE_BACKTEST",publishable:false,windows,
     totalWindows:windows.length,missingWindows,

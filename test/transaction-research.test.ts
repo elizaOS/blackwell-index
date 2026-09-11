@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, statSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { analyzeTransactions, backtestTransactions, ResearchConfig, TransactionRecord } from "../src/transaction-research";
+import { analyzeTransactions as analyze, backtestTransactions as backtest, ResearchConfig, TransactionRecord } from "../src/transaction-research";
+const analyzeTransactions = (input: unknown, settings: unknown) => analyze(input,settings,8000000);
+const backtestTransactions = (input: unknown, settings: unknown) => backtest(input,settings,8000000);
 
 // Synthetic unit-test fixtures only. Never exported as observations or live data.
 const record = (overrides = {}) => ({schemaVersion:1,source:"test-source",economicProvider:"provider-a",buyerId:"buyer-a",dealId:"deal-a",segmentId:"segment-a",revision:0,recordedAt:7200000,evidenceState:"DELIVERED",evidenceHash:"a".repeat(64),model:"B200",sku:"test-sku",region:"test-region",bundle:"test-bundle",topology:"HGX",currency:"USD",procurement:"ON_DEMAND",tenancy:"EXCLUSIVE",gpuCount:1,serviceStart:0,serviceEnd:3600000,grossComputeUsd:"2",discountUsd:"0",refundUsd:"0",mandatoryComputeFeesUsd:"0",netComputeUsd:"2",invoiceId:null,invoiceEvidenceHash:null,paidAllocatedUsd:null,paymentEvidenceHash:null,affiliated:false,cancelled:false,...overrides});
@@ -35,6 +37,9 @@ describe("private transaction research", () => {
     const c=config(); c.permissions[0]!.expiresAt=c.asOf;
     expect(()=>analyzeTransactions(pair(),c)).toThrow("permission");
     expect(ResearchConfig.safeParse(config({permissions:[...config().permissions,...config().permissions]})).success).toBe(false);
+  });
+  test("historical as-of cannot revive expired evaluation permission", () => {
+    expect(()=>analyze(pair(),config(),10000000)).toThrow("permission");
   });
   test("duplicate polls and reseller duplicates cannot create volume", () => {
     expect(()=>analyzeTransactions([record(),record()],config())).toThrow("Duplicate");
@@ -122,7 +127,8 @@ describe("private transaction research", () => {
     try {
       const records=join(dir,"records.json"), settings=join(dir,"config.json"), output=join(dir,"report.json");
       writeFileSync(records,JSON.stringify(pair()),{mode:0o600});
-      writeFileSync(settings,JSON.stringify(config()),{mode:0o600});
+      const c=config(); c.permissions[0]!.expiresAt=Date.now()+60000;
+      writeFileSync(settings,JSON.stringify(c),{mode:0o600});
       const run=()=>Bun.spawn([process.execPath,"scripts/transaction-research.ts",records,settings,output],{stdout:"pipe",stderr:"pipe"});
       const first=run(); const stdout=await new Response(first.stdout).text();
       expect(await first.exited).toBe(0); expect(stdout).not.toContain("3.500000");

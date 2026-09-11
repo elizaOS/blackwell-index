@@ -22,6 +22,8 @@ The report includes exclusion counts, concentration, effective provider count, c
 
 Input/configuration hashes and the winsorization parameter bind each report to its private inputs. Hashes establish reproducibility, not source authenticity. Segment overlap checks sort intervals; leave-one-provider-out VWAP uses group totals rather than repeatedly sorting the full dataset.
 
+Evaluation permissions are checked against the actual evaluation clock, independently of the historical `asOf` cutoff, and that clock is recorded in the report. Selecting an old observation window cannot revive an expired license. The library clock parameter exists for deterministic tests; the CLI always uses the current time.
+
 ## Running
 
 Run `bun run research:transactions /absolute/private/records.json /absolute/private/config.json /absolute/private/new-report.json`.
