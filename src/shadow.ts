@@ -6,13 +6,15 @@ import { operatingStudy, studyChangeBps, type OperatingStudy, type StudyOptions 
 import type { Methodology, Registry, SignedBatch } from "./types";
 import { qualifyModel } from "./qualification";
 import { parseMethodology, parseRegistry } from "./validation";
+import { compileOfferSchedule } from "./offer-schedule";
 
 const DAY = 86_400_000;
 export const SHADOW_LIMITS = Object.freeze({ cycles: 5000, reports: 1000, reportBytes: 16 * 1024 * 1024 });
 type Series = OperatingStudy["series"][number];
-type Point = Series["points"][number];
-interface Quote { series: Series; point: Point }
+
+interface Quote { series: Series; point: Series["points"][number] }
 interface GroupPrice { group: string; price: string; observedAt: number }
+interface ScheduledPanel { providerHashes: Map<string, Set<string>>; groupProviders: Map<string, Set<string>> }
 interface Print { at: number; price: string | null; candidatePrice: string | null; sourceAgeMs: number | null;
   dispersionBps: string | null; missingGroups: string[]; reasons: string[]; groups: GroupPrice[] }
 
@@ -41,11 +43,12 @@ export function positionStress(input: { side: "LONG" | "SHORT"; quantityGpuHours
     negativeEquity: equity < 0n, executed: false };
 }
 
-function groupPrices(quotes: Quote[], registry: Registry, methodology: Methodology, at: number): GroupPrice[] {
+function groupPrices(quotes: Quote[], registry: Registry, methodology: Methodology, at: number, schedule?: ScheduledPanel): GroupPrice[] {
   const eligible = quotes.filter(({ series, point }) => {
     const t = series.terms, p = registry.providers.find(value => value.id === t.provider);
     return p && p.sources.includes(t.source) && t.model === "B200" && t.procurement === "ON_DEMAND" && t.priceBasis === "LIST" &&
       t.tenancy === "EXCLUSIVE" && t.priceScope === "PUBLIC" &&
+      (!schedule || schedule.providerHashes.get(t.provider)?.has(t.offerIdentityHash ?? "")) &&
       (methodology.cohort.regions.includes("*") || methodology.cohort.regions.includes(t.region)) &&
       point.knownAt <= at && point.observedAt <= point.knownAt && at - point.observedAt <= methodology.maxAgeMs &&
       (point.priceEffectiveAt === null || point.priceEffectiveAt <= point.observedAt) && (point.expiresAt === null || point.expiresAt > at);
@@ -53,13 +56,19 @@ function groupPrices(quotes: Quote[], registry: Registry, methodology: Methodolo
   const providers = registry.providers.flatMap(provider => {
     const matches = eligible.filter(value => value.series.terms.provider === provider.id);
     if (!matches.length) return [];
+    if (schedule) {
+      const required = schedule.providerHashes.get(provider.id);
+      const present = new Set(matches.map(value => value.series.terms.offerIdentityHash));
+      if (!required || [...required].some(key => !present.has(key))) return [];
+    }
     const regions = [...new Set(matches.map(value => value.series.terms.region))].sort();
-    return [{ group: provider.economicGroup, price: median(regions.map(region => median(matches.filter(value => value.series.terms.region === region)
+    return [{ provider: provider.id, group: provider.economicGroup, price: median(regions.map(region => median(matches.filter(value => value.series.terms.region === region)
       .map(value => toMicros(value.point.price))))), observedAt: Math.min(...matches.map(value => value.point.observedAt)) }];
   });
-  return [...new Set(providers.map(value => value.group))].sort().map(group => {
+  return [...new Set(providers.map(value => value.group))].sort().flatMap(group => {
     const matches = providers.filter(value => value.group === group);
-    return { group, price: fromMicros(median(matches.map(value => value.price))), observedAt: Math.min(...matches.map(value => value.observedAt)) };
+    if (schedule && matches.length !== schedule.groupProviders.get(group)?.size) return [];
+    return [{ group, price: fromMicros(median(matches.map(value => value.price))), observedAt: Math.min(...matches.map(value => value.observedAt)) }];
   });
 }
 
@@ -81,8 +90,14 @@ function fixedPrint(groups: GroupPrice[], weights: Record<string, number>, metho
 
 export function shadowStudy(db: SqlDriver, registryInput: Registry, methodologyInput: Methodology, options: StudyOptions) {
   const registry = parseRegistry(registryInput), methodology = parseMethodology(methodologyInput);
+  const compiled = compileOfferSchedule(methodology, registry);
+  const schedule: ScheduledPanel | undefined = compiled ? {
+    providerHashes: new Map([...compiled.providerKeys].map(([provider, keys]) => [provider, new Set([...keys].map(key => hash(key)))])),
+    groupProviders: compiled.groupProviders,
+  } : undefined;
   return db.transaction(() => {
-    const study = operatingStudy(db, { ...options, maxCaptures: Math.min(options.maxCaptures ?? SHADOW_LIMITS.cycles, SHADOW_LIMITS.cycles) });
+    const study = operatingStudy(db, { ...options, exactB200OfferIdentity: Boolean(schedule),
+      maxCaptures: Math.min(options.maxCaptures ?? SHADOW_LIMITS.cycles, SHADOW_LIMITS.cycles) });
     const rows = db.query("SELECT DISTINCT collected_at FROM captures WHERE collected_at BETWEEN ? AND ? ORDER BY collected_at LIMIT ?")
       .all(study.window.from, study.asOf, SHADOW_LIMITS.cycles + 1) as Array<{ collected_at: number }>;
     const cycles = rows.slice(0, SHADOW_LIMITS.cycles).map(row => row.collected_at);
@@ -96,7 +111,7 @@ export function shadowStudy(db: SqlDriver, registryInput: Registry, methodologyI
     }
     const unsupportedCohort = methodology.cohort.procurement !== "ON_DEMAND" || methodology.cohort.priceBasis !== "LIST";
     const inputIncomplete = unsupportedCohort || !study.completeness.complete || rows.length > SHADOW_LIMITS.cycles || conflictingPoints > 0 || Object.keys(study.anomalies.counts).length > 0;
-    const pricesByCycle = cycles.map(at => ({ at, groups: groupPrices([...(byCycle.get(at)?.values() ?? [])], registry, methodology, at) }));
+    const pricesByCycle = cycles.map(at => ({ at, groups: groupPrices([...(byCycle.get(at)?.values() ?? [])], registry, methodology, at, schedule) }));
     // An explicit configured panel wins. Otherwise freeze the first observed panel for research only.
     const configuredWeights = methodology.providerWeights.B200;
     const weights = Object.keys(configuredWeights).length ? { ...configuredWeights } : Object.fromEntries((pricesByCycle.find(value => value.groups.length)?.groups ?? []).map(value => [value.group, 1]));
@@ -109,10 +124,10 @@ export function shadowStudy(db: SqlDriver, registryInput: Registry, methodologyI
       // Check expiry boundaries between captures, including after an earlier irrelevant quote expired.
       const expiries = [...new Set(quotes.flatMap(quote => [quote.point.observedAt + methodology.maxAgeMs + 1,
         quote.point.expiresAt ?? Number.MAX_SAFE_INTEGER]).filter(expiry => expiry > value.at && expiry < next))].sort((a, b) => a - b);
-      for (const expiry of expiries) timeline.push(fixedPrint(groupPrices(quotes, registry, methodology, expiry), weights, methodology, expiry, inputIncomplete));
+      for (const expiry of expiries) timeline.push(fixedPrint(groupPrices(quotes, registry, methodology, expiry, schedule), weights, methodology, expiry, inputIncomplete));
     }
     const lastCycle = cycles.at(-1), lastQuotes = lastCycle === undefined ? [] : [...(byCycle.get(lastCycle)?.values() ?? [])];
-    const current = fixedPrint(groupPrices(lastQuotes, registry, methodology, study.asOf), weights, methodology, study.asOf, inputIncomplete);
+    const current = fixedPrint(groupPrices(lastQuotes, registry, methodology, study.asOf, schedule), weights, methodology, study.asOf, inputIncomplete);
     const reference = [...timeline].reverse().find(value => value.price !== null) ?? null;
     const decimalLimit = toMicros("99999999999.999999");
     const stressWithinRange = reference !== null && toMicros(reference.price!) * 50n <= decimalLimit &&
@@ -166,6 +181,9 @@ export function shadowStudy(db: SqlDriver, registryInput: Registry, methodologyI
         "Complete capture cycles use a fixed panel; missing constituents produce gaps. The current view ages the last capture without refreshing its source time.",
         "Synthetic stresses are separate overlays. Accidental reweight prices demonstrate the unsafe alternative and are never used for position calculations.",
         "Mark and simple funding scenarios are assumptions, not Hyperliquid rules, calibrated leverage, executable liquidity or liquidation outcomes.",
-        "Per-model diagnostics retain the existing composite publication gate. Pyth approval and authenticated upstream/venue delivery remain external gates."] };
+        ...(schedule ? ["The configured exact offer schedule is applied to each capture cycle; all selected offers and providers are required. Hashed identities do not establish source authenticity or rights."] : []),
+        methodology.publicationScope
+          ? "Per-model diagnostics retain the configured model publication gate. Pyth approval and authenticated upstream/venue delivery remain external gates."
+          : "Per-model diagnostics retain the existing composite publication gate. Pyth approval and authenticated upstream/venue delivery remain external gates."] };
   })();
 }

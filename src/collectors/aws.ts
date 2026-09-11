@@ -1,10 +1,9 @@
-import { GetProductsCommand, PricingClient } from "@aws-sdk/client-pricing";
 import { fromMicros, normalizeInstance, toMicros } from "../decimal";
 import type { Collector, CollectorResult, GpuModel, Procurement } from "../types";
 import { array, CollectionError, decimal, failure, jsonRequest, object, string, timestamp } from "./http";
 
 const ENDPOINT = "https://api.pricing.us-east-1.amazonaws.com";
-interface SignedPricingRequest { protocol: string; hostname: string; path: string; port?: number; method: string; headers: Record<string, string>; body?: RequestInit["body"] }
+
 export const AWS_INSTANCES: ReadonlyArray<{ sku: string; model: GpuModel; gpuCount: number }> = [
   { sku: "p6-b200.48xlarge", model: "B200", gpuCount: 8 },
   { sku: "p6-b300.48xlarge", model: "B300", gpuCount: 8 },
@@ -19,6 +18,7 @@ export const aws: Collector = {
     const accessKeyId = context.env.AWS_ACCESS_KEY_ID;
     const secretAccessKey = context.env.AWS_SECRET_ACCESS_KEY;
     if (!accessKeyId?.trim() || !secretAccessKey?.trim()) return { observations: [], errors: ["NO_KEY: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are required for aws-pricing; AWS_SESSION_TOKEN is required for temporary credentials"] };
+    const { GetProductsCommand, PricingClient } = await import("@aws-sdk/client-pricing");
     const result: CollectorResult = { observations: [], errors: [] };
     let lastResponse: Awaited<ReturnType<typeof jsonRequest>> | undefined;
     // Explicit credentials work in Node/Bun and Workers without filesystem or instance-metadata discovery.
@@ -27,7 +27,7 @@ export const aws: Collector = {
       credentials: { accessKeyId, secretAccessKey, ...(context.env.AWS_SESSION_TOKEN ? { sessionToken: context.env.AWS_SESSION_TOKEN } : {}) },
       requestHandler: {
         metadata: { handlerProtocol: "http/1.1" },
-        async handle(request: SignedPricingRequest) {
+        async handle(request: { protocol: string; hostname: string; path: string; port?: number; method: string; headers: Record<string, string>; body?: RequestInit["body"] }) {
           if (request.protocol !== "https:" || request.hostname !== "api.pricing.us-east-1.amazonaws.com" || request.path !== "/" || request.port && request.port !== 443) throw new CollectionError("INVALID_ENDPOINT", "AWS signed pricing request changed origin");
           lastResponse = await jsonRequest(context, "aws-pricing", new URL(ENDPOINT), { method: request.method, headers: request.headers, ...(request.body !== undefined ? { body: request.body } : {}) });
           return { response: { statusCode: 200, headers: { "content-type": "application/x-amz-json-1.1" }, body: new TextEncoder().encode(JSON.stringify(lastResponse.data)) } };

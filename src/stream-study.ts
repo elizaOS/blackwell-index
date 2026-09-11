@@ -13,13 +13,10 @@ export interface StreamStudyOptions {
   expectedIntervalMs: number; asOf?: number; from?: number; maxCaptures?: number; maxObservations?: number;
   maxInputBytes?: number; maxSeries?: number; maxSamples?: number;
 }
-interface Bounds { count: number; first: number | null; last: number | null }
+
 interface Header { id: number; collected_at: number; bytes: number }
 interface Point { knownAt: number; observedAt: number; price: string }
-interface Aggregate {
-  id: string; terms: ReturnType<typeof studyTerms>; first: Point; last: Point; minimum: bigint; maximum: bigint;
-  observations: number; captures: number; lastCapture: number; distinctTimes: boolean; issues: Set<string>;
-}
+
 interface Coverage { observations: number; captures: number; lastCapture: number; sources: Set<string>; models: Set<string> }
 function integer(value: number | undefined, fallback: number, maximum: number): number {
   const result = value ?? fallback;
@@ -41,7 +38,7 @@ export function streamingStudy(input: Pick<Journal, "db"> | SqlDriver, options: 
     // A restored hosted journal retains physical batches and separate cycle markers.
     const chunked = !!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='collection_captures'").get();
     const cycleTable = chunked ? "collection_captures" : "captures";
-    const bounds = (table: string, start: number) => db.query(`SELECT COUNT(*) AS count,MIN(collected_at) AS first,MAX(collected_at) AS last FROM ${table} WHERE typeof(collected_at)='integer' AND collected_at BETWEEN ? AND ?`).get(start, asOf) as Bounds;
+    const bounds = (table: string, start: number) => db.query(`SELECT COUNT(*) AS count,MIN(collected_at) AS first,MAX(collected_at) AS last FROM ${table} WHERE typeof(collected_at)='integer' AND collected_at BETWEEN ? AND ?`).get(start, asOf) as { count: number; first: number | null; last: number | null };
     const retained = bounds(cycleTable, 1), from = time(options.from ?? retained.first ?? asOf);
     if (from > asOf) throw new Error("INVALID_STREAM_STUDY_WINDOW");
     const window = bounds(cycleTable, from), batches = bounds("captures", from);
@@ -84,7 +81,10 @@ export function streamingStudy(input: Pick<Journal, "db"> | SqlDriver, options: 
       }
       gap(expectedBuckets);
     }
-    const series = new Map<string, Aggregate>(), mappings = new Map<string, Map<string, Set<string>>>();
+    const series = new Map<string, {
+      id: string; terms: ReturnType<typeof studyTerms>; first: Point; last: Point; minimum: bigint; maximum: bigint;
+      observations: number; captures: number; lastCapture: number; distinctTimes: boolean; issues: Set<string>;
+    }>(), mappings = new Map<string, Map<string, Set<string>>>();
     const sources = new Map<string, Coverage & { provider: string; source: string }>();
     const models = new Map(MODELS.map(model => [model, coverage()]));
     // Tiny LRU bounds repeated evidence receipt lookups even when every capture has new evidence.

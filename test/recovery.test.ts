@@ -8,7 +8,7 @@ import { defaultMethodology, defaultRegistry, type NodeConfig } from "../src/con
 import { calculate } from "../src/engine";
 import { backupNode, createRecoveryKey, inspectBackup, RECOVERY_MARKER, restoreNode } from "../src/recovery";
 import { Store } from "../src/store";
-import type { NodeIdentity } from "../src/types";
+import type { Methodology, NodeIdentity } from "../src/types";
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import { Database } from "bun:sqlite";
 import { PYTH_PROTOCOL, type PythManifest, type PythPublication } from "../src/pyth";
@@ -38,11 +38,26 @@ async function fixture() {
   return {root,identity,config,configPath,keyPath,outputPath,store,evidenceHash,batch,registry,methodology,now};
 }
 function backup(f:Awaited<ReturnType<typeof fixture>>) {return backupNode(f.root,f.configPath,f.outputPath,f.keyPath);}
-async function publishedFixture() {
+async function publishedFixture(scoped = false, scheduled = false, withResources = false) {
   const f=await fixture(),e=environment();
-  const registry={...e.registry,network:f.config.network},methodology={...e.methodology,effectiveAt:f.now-10_000};
+  const registry={...e.registry,network:f.config.network},methodology:Methodology={...e.methodology,effectiveAt:f.now-10_000};
+  if(scoped || scheduled) {
+    methodology.publicationScope={kind:"MODEL",model:"B200",approvalEvidence:"Synthetic recovery approval"};
+    for(const model of ["B300","GB200","GB300"] as const)methodology.providerWeights[model]={};
+  }
+  if(scheduled) {
+    for(const batch of e.batches)for(const observation of batch.payload.observations) {
+      observation.priceScope="PUBLIC";observation.topology="HGX";observation.minimumOrderGpuCount=8;
+      observation.sourceRecordId=`record:${observation.provider}:${observation.sku}`;
+      if(withResources)observation.instanceResources={schemaVersion:1,scope:"FULL_INSTANCE",vcpus:180,memoryGiB:1536,storageGiB:22000};
+    }
+    methodology.offerSchedule={schemaVersion:1,model:"B200",approvalEvidence:"Synthetic recovery offer approval",
+      offers:e.batches[0]!.payload.observations.filter(o=>o.model==="B200").map(o=>({provider:o.provider,source:o.source,sku:o.sku,region:o.region,
+        gpuCount:8,topology:"HGX",includes:[...o.includes],minimumOrderGpuCount:8,sourceRecordId:o.sourceRecordId!,sourceUrl:o.sourceUrl,
+        ...(o.instanceResources?{instanceResources:structuredClone(o.instanceResources)}:{})}))};
+  }
   const batches=e.batches.map((batch,index)=>signBatch({...batch.payload,network:registry.network,createdAt:f.now,
-    observations:batch.payload.observations.map(observation=>({...observation,observedAt:f.now-1000,priceEffectiveAt:f.now-86_400_000*30}))},e.identities[index]!));
+    observations:batch.payload.observations.filter(observation=>!scoped||observation.model==="B200").map(observation=>({...observation,observedAt:f.now-1000,priceEffectiveAt:f.now-86_400_000*30}))},e.identities[index]!));
   f.store.saveConfiguration(registry);f.store.saveConfiguration(methodology);
   save(join(f.root,f.config.registryPath),registry);save(join(f.root,f.config.methodologyPath),methodology);
   for(const batch of batches)f.store.accept(batch,f.now,true);
@@ -55,6 +70,61 @@ function recordProof(f:Awaited<ReturnType<typeof fixture>>) {
   f.store.recordEquivocation({first:f.batch,second},f.now+2);
   return {first:f.batch,second};
 }
+
+test("V1 recovery reproduces both legacy history and an explicitly scoped B200 snapshot without activating delivery", async () => {
+  const f = await publishedFixture(true), destination = join(f.root,"scoped-restored");
+  try {
+    backup(f); const inspection = inspectBackup(f.outputPath,f.keyPath);
+    expect(inspection.reproducedSnapshots).toBe(2);
+    expect(restoreNode(f.outputPath,f.keyPath,destination).status).toBe("RECOVERY_REVIEW_REQUIRED");
+    const restored = new Store(join(destination,"data/node.sqlite"));
+    try {
+      const row = restored.db.query("SELECT payload FROM snapshots ORDER BY id DESC LIMIT 1").get() as {payload:string};
+      expect(JSON.parse(row.payload)).toEqual(f.snapshot);
+      expect(restored.configuration(f.snapshot.methodologyHash)).toEqual(f.historicalMethodology);
+      expect(f.snapshot.publicationScope).toEqual({kind:"MODEL",model:"B200"});
+      expect(f.snapshot.feeds.find(feed=>feed.id==="SBX")!.status).toBe("UNAVAILABLE");
+    } finally { restored.close(); }
+    const config = JSON.parse(readFileSync(join(destination,"config/node.local.json"),"utf8"));
+    expect(config.pythManifestPath).toBeUndefined(); expect(config.collectors).toEqual([]);
+  } finally { f.store.close(); }
+});
+
+test("rehashing a scoped snapshot cannot erase its approved publication boundary during recovery", async () => {
+  const f = await publishedFixture(true);
+  try {
+    const altered = structuredClone(f.snapshot); delete altered.publicationScope;
+    const head = f.store.db.query("SELECT id,previous_hash FROM snapshots ORDER BY id DESC LIMIT 1").get() as {id:number;previous_hash:string};
+    f.store.db.query("UPDATE snapshots SET payload=?,hash=? WHERE id=?").run(canonical(altered),hash({previousHash:head.previous_hash,snapshot:altered}),head.id);
+    expect(f.store.verifyHistory().valid).toBe(true);
+    expect(() => backup(f)).toThrow("calculation reproduction mismatch"); expect(existsSync(f.outputPath)).toBe(false);
+  } finally { f.store.close(); }
+});
+
+for(const withResources of [false,true])test(`V1 recovery reproduces an exact offer schedule${withResources?" with full-instance resource quantities":""} and preserves its inactive delivery boundary`, async () => {
+  const f=await publishedFixture(true,true,withResources),destination=join(f.root,"offer-schedule-restored");
+  try {
+    backup(f);expect(inspectBackup(f.outputPath,f.keyPath).reproducedSnapshots).toBe(2);
+    expect(restoreNode(f.outputPath,f.keyPath,destination).status).toBe("RECOVERY_REVIEW_REQUIRED");
+    const restored=new Store(join(destination,"data/node.sqlite"));
+    try {
+      const row=restored.db.query("SELECT payload FROM snapshots ORDER BY id DESC LIMIT 1").get() as {payload:string};
+      expect(JSON.parse(row.payload)).toEqual(f.snapshot);
+      const recovered=restored.configuration(f.snapshot.methodologyHash) as Methodology;
+      expect(recovered.offerSchedule).toEqual(f.historicalMethodology.offerSchedule);
+      expect(calculate(f.batches,f.historicalRegistry,recovered,f.now)).toEqual(f.snapshot);
+      const changed=structuredClone(recovered);changed.offerSchedule!.offers[0]!.sourceRecordId+="-changed";
+      expect(calculate(f.batches,f.historicalRegistry,changed,f.now).publishable).toBe(false);
+      if(withResources) {
+        expect(recovered.offerSchedule!.offers[0]!.instanceResources).toEqual({schemaVersion:1,scope:"FULL_INSTANCE",vcpus:180,memoryGiB:1536,storageGiB:22000});
+        const changedResources=structuredClone(recovered);changedResources.offerSchedule!.offers[0]!.instanceResources!.memoryGiB++;
+        expect(calculate(f.batches,f.historicalRegistry,changedResources,f.now).publishable).toBe(false);
+      }
+    } finally {restored.close();}
+    const config=JSON.parse(readFileSync(join(destination,"config/node.local.json"),"utf8"));
+    expect(config.pythManifestPath).toBeUndefined();expect(config.collectors).toEqual([]);expect(config.peers).toEqual([]);
+  } finally {f.store.close();}
+});
 
 test("encrypted recovery includes committed WAL state and verifies retained evidence/history",async()=>{
   const f=await fixture();

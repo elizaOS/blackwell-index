@@ -8,6 +8,7 @@ import { resolve, sep, isAbsolute } from "node:path";
 import { realpath } from "node:fs/promises";
 import { z } from "zod";
 import { latestDemoResponse } from "./demo";
+import { isFeedPublishable } from "./publication";
 
 const MAX_BODY=2_000_000;
 const MAX_PEER_BODY=8_000_000;
@@ -162,10 +163,10 @@ export class OracleNode {
     }
     if(url.pathname==="/v1/feeds"||url.pathname==="/v1/ready"||url.pathname.startsWith("/v1/feeds/")) {
       const snapshot=this.snapshot();
-      if(url.pathname==="/v1/ready")return json({publishable:snapshot.publishable},snapshot.publishable?200:503);
+      if(url.pathname==="/v1/ready")return json({publishable:snapshot.publishable,...(snapshot.publicationScope?{publicationScope:snapshot.publicationScope}:{})},snapshot.publishable?200:503);
       if(url.pathname.startsWith("/v1/feeds/")) {
         const id=decodeURIComponent(url.pathname.slice("/v1/feeds/".length)),feed=snapshot.feeds.find(f=>f.id===id);
-        return feed?json({feed,methodologyVersion:snapshot.methodologyVersion,publishable:snapshot.publishable},feed.status==="READY"?200:503):json({error:"UNKNOWN_FEED"},404);
+        return feed?json({feed,methodologyVersion:snapshot.methodologyVersion,publishable:isFeedPublishable(snapshot,id),...(snapshot.publicationScope?{publicationScope:snapshot.publicationScope}:{})},feed.status==="READY"?200:503):json({error:"UNKNOWN_FEED"},404);
       }
       return json(snapshot);
     }

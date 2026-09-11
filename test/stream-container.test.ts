@@ -242,6 +242,23 @@ test("abort before starting has no side effect, and abort while source is pendin
   expect(returned).toBe(true); expect(existsSync(f.file)).toBe(false); expect(existsSync(`${f.file}.partial`)).toBe(true);
 });
 
+for (const size of [1, 512 * 1024]) test(`timer cancellation interrupts a synchronous source with ${size}-byte frames`, async () => {
+  const f = fixture(), controller = new AbortController(), frame = Buffer.alloc(size, 37);
+  // The large-frame source ends before the frame-count scheduling threshold,
+  // so it also proves that byte-based scheduling is independently effective.
+  const total = size === 1 ? 200 : 32;
+  let produced = 0, closed = false;
+  async function* source() {
+    try { for (; produced < total; produced++) yield frame; }
+    finally { closed = true; }
+  }
+  const interrupt = setImmediate(() => controller.abort());
+  try { await expect(writeStreamContainer(source(), f.file, f.key, { signal: controller.signal })).rejects.toThrow("STREAM_CONTAINER_ABORTED"); }
+  finally { clearImmediate(interrupt); }
+  expect(produced).toBeLessThan(total); expect(closed).toBe(true); expect(existsSync(f.file)).toBe(false);
+  expect(existsSync(`${f.file}.partial`)).toBe(true);
+});
+
 test("reader cancellation and early consumer return close the handle without claiming verification", async () => {
   const f = await ready(), controller = new AbortController();
   const reader = readStreamContainer(f.file, f.key, { signal: controller.signal });

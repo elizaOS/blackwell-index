@@ -75,3 +75,5 @@ body:not(.altx-page){min-height:100svh}
 @media(max-width:560px){.providers-page table{font-size:11px}.providers-page th,.providers-page td{padding-inline:8px}}
 
 .index-page .composite-price{margin-top:0}
+.index-page #publication-scope-label{font-size:16px;line-height:1.6;margin:12px 0 0}
+.index-page #connection-status:not(.visually-hidden){font-size:14px;line-height:1.6;max-width:70ch;margin:0 0 24px}

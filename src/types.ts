@@ -27,12 +27,24 @@ export interface Observation {
   topology?: "HGX" | "NVL72" | "UNKNOWN";
   minimumOrderGpuCount?: number | null;
   sourceRecordId?: string;
+  /** Versioned quantities for the full instance; omission means unreported, not zero. */
+  instanceResources?: InstanceResources;
   /** Retrieval time is not the date when a catalog tariff last changed. */
   observedAt: number;
   priceEffectiveAt: number | null;
   expiresAt: number | null;
   sourceUrl: string;
   evidenceHash: string;
+}
+
+export interface InstanceResources {
+  schemaVersion: 1;
+  scope: "FULL_INSTANCE";
+  /** Virtual CPUs, not physical cores or provider-specific OCPUs. */
+  vcpus: number;
+  memoryGiB: number;
+  /** Reported included storage; does not assert disk medium, locality or durability. */
+  storageGiB: number;
 }
 
 export interface ObservationBatch {
@@ -78,7 +90,34 @@ export interface Methodology {
   providerWeights: Record<GpuModel, Record<string, number>>;
   modelWeights: Record<GpuModel, number>;
   weightEvidence: string;
+  /** Omitted for the legacy four-model composite policy. Approval remains explicit. */
+  publicationScope?: PublicationScope & { approvalEvidence: string };
+  /** Inactive unless explicitly configured; all listed offers remain required. */
+  offerSchedule?: B200OfferSchedule;
 }
+export interface ScheduledB200Offer {
+  provider: string;
+  source: string;
+  sku: string;
+  region: string;
+  gpuCount: 8;
+  topology: "HGX";
+  includes: string[];
+  /** Null explicitly matches unknown minimum order; it is never a wildcard. */
+  minimumOrderGpuCount: number | null;
+  sourceRecordId: string;
+  sourceUrl: string;
+  /** Exact optional quantities; omission matches only an unreported bundle. */
+  instanceResources?: InstanceResources;
+}
+export interface B200OfferSchedule {
+  schemaVersion: 1;
+  model: "B200";
+  approvalEvidence: string;
+  offers: ScheduledB200Offer[];
+}
+/** A publication boundary, not a hardware or commercial eligibility rule. */
+export interface PublicationScope { kind: "MODEL"; model: "B200" }
 export interface Feed {
   id: string;
   kind: "PROVIDER" | "MODEL" | "COMPOSITE";
@@ -102,6 +141,7 @@ export interface Snapshot {
   methodologyHash: string;
   registryHash: string;
   publishable: boolean;
+  publicationScope?: PublicationScope;
   feeds: Feed[];
   inputBatchHashes: string[];
   rejected: Array<{ batchHash: string; reason: string }>;

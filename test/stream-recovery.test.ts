@@ -15,15 +15,31 @@ import { backupNode, createRecoveryKey, RECOVERY_MARKER } from "../src/recovery"
 import { backupStreamFrames, inspectStreamBackup, restoreStreamNode, type StreamRecoveryOptions } from "../src/stream-recovery";
 import { writeStreamContainer } from "../src/stream-container";
 import { Store } from "../src/store";
+import type { Methodology } from "../src/types";
 import { environment, NOW } from "./helpers";
 
 const RELEASE="ef".repeat(20),directories:string[]=[],stores=new Set<Store>();
 afterEach(()=>{for(const store of stores)store.close();stores.clear();for(const path of directories.splice(0))rmSync(path,{recursive:true,force:true});});
 const digest=(body:Uint8Array)=>createHash("sha256").update(body).digest("hex");
-async function fixture(split=false) {
+async function fixture(split=false,scoped=false,scheduled=false,withResources=false) {
   const directory=mkdtempSync(join(tmpdir(),"sbx-stream-recovery-test-"));directories.push(directory);
   const store=new Store(join(directory,"source.sqlite"));stores.add(store);
   const journal=new ChunkedJournal(store.db),e=environment(),identity=e.identities[0]!;
+  if(scoped || scheduled) {
+    e.methodology.publicationScope={kind:"MODEL",model:"B200",approvalEvidence:"Synthetic streaming recovery scope"};
+    for(const model of ["B300","GB200","GB300"] as const)e.methodology.providerWeights[model]={};
+  }
+  if(scheduled) {
+    for(const observation of e.observations) {
+      observation.priceScope="PUBLIC";observation.topology="HGX";observation.minimumOrderGpuCount=8;
+      observation.sourceRecordId=`record:${observation.provider}:${observation.sku}`;
+      if(withResources)observation.instanceResources={schemaVersion:1,scope:"FULL_INSTANCE",vcpus:180,memoryGiB:1536,storageGiB:22000};
+    }
+    e.methodology.offerSchedule={schemaVersion:1,model:"B200",approvalEvidence:"Synthetic streaming offer approval",
+      offers:e.observations.filter(o=>o.model==="B200").map(o=>({provider:o.provider,source:o.source,sku:o.sku,region:o.region,
+        gpuCount:8,topology:"HGX",includes:[...o.includes],minimumOrderGpuCount:8,sourceRecordId:o.sourceRecordId!,sourceUrl:o.sourceUrl,
+        ...(o.instanceResources?{instanceResources:structuredClone(o.instanceResources)}:{})}))};
+  }
   journal.saveConfiguration(e.registry);journal.saveConfiguration(e.methodology);collectorSchedule(journal,"test-source",NOW);
   const body=Buffer.alloc(split?EVIDENCE_CHUNK_BYTES+31:31);for(let i=0;i<body.length;i++)body[i]=i%251;
   const evidenceHash=digest(body);
@@ -71,6 +87,42 @@ function sourceFrames(f:Fixture,mutate?:(tables:Tables)=>void,descriptorMutation
 }
 async function* stream(frames:Uint8Array[]){for(const frame of frames)yield frame;}
 async function write(f:Fixture,frames=sourceFrames(f)){return writeStreamContainer(stream(frames),f.outputPath,f.keyPath);}
+
+test("V2 recovery preserves B200-only scope, approved weights and publication interlock", async () => {
+  const f = await fixture(false,true), destination = join(f.directory,"scoped-restored");
+  await backupStreamFrames(stream(sourceFrames(f)),f.outputPath,f.keyPath,f.options);
+  expect((await inspectStreamBackup(f.outputPath,f.keyPath,f.options)).reproducedSnapshots).toBe(1);
+  expect((await restoreStreamNode(f.outputPath,f.keyPath,destination,f.options)).status).toBe("RECOVERY_REVIEW_REQUIRED");
+  const restored = new Store(join(destination,"data/node.sqlite")); stores.add(restored);
+  const row = restored.db.query("SELECT payload FROM snapshots ORDER BY id DESC LIMIT 1").get() as {payload:string};
+  expect(JSON.parse(row.payload)).toEqual(f.snapshot); expect(f.snapshot.publicationScope).toEqual({kind:"MODEL",model:"B200"});
+  expect(restored.configuration(f.snapshot.methodologyHash)).toEqual(f.e.methodology);
+  const config = JSON.parse(readFileSync(join(destination,"config/node.local.json"),"utf8"));
+  expect(config.pythManifestPath).toBeUndefined(); expect(config.collectors).toEqual([]);
+});
+
+for(const withResources of [false,true])test(`V2 recovery reproduces the exact offer schedule${withResources?" with full-instance resource quantities":""} without activating publication`,async()=>{
+  const f=await fixture(false,true,true,withResources),destination=join(f.directory,"offer-schedule-restored");
+  expect(f.snapshot.publishable).toBe(true);
+  await backupStreamFrames(stream(sourceFrames(f)),f.outputPath,f.keyPath,f.options);
+  expect((await inspectStreamBackup(f.outputPath,f.keyPath,f.options)).reproducedSnapshots).toBe(1);
+  expect((await restoreStreamNode(f.outputPath,f.keyPath,destination,f.options)).status).toBe("RECOVERY_REVIEW_REQUIRED");
+  const restored=new Store(join(destination,"data/node.sqlite"));stores.add(restored);
+  const row=restored.db.query("SELECT payload FROM snapshots ORDER BY id DESC LIMIT 1").get() as {payload:string};
+  expect(JSON.parse(row.payload)).toEqual(f.snapshot);
+  const recovered=restored.configuration(f.snapshot.methodologyHash) as Methodology;
+  expect(recovered.offerSchedule).toEqual(f.e.methodology.offerSchedule);
+  expect(calculate(f.batches,f.e.registry,recovered,NOW)).toEqual(f.snapshot);
+  const changed=structuredClone(recovered);changed.offerSchedule!.offers[0]!.sourceRecordId+="-changed";
+  expect(calculate(f.batches,f.e.registry,changed,NOW).publishable).toBe(false);
+  if(withResources) {
+    expect(recovered.offerSchedule!.offers[0]!.instanceResources).toEqual({schemaVersion:1,scope:"FULL_INSTANCE",vcpus:180,memoryGiB:1536,storageGiB:22000});
+    const changedResources=structuredClone(recovered);changedResources.offerSchedule!.offers[0]!.instanceResources!.memoryGiB++;
+    expect(calculate(f.batches,f.e.registry,changedResources,NOW).publishable).toBe(false);
+  }
+  const config=JSON.parse(readFileSync(join(destination,"config/node.local.json"),"utf8"));
+  expect(config.pythManifestPath).toBeUndefined();expect(config.collectors).toEqual([]);expect(config.peers).toEqual([]);
+});
 
 test("V2 source frames encrypt, inspect and restore chunked history with a new disabled identity",async()=>{
   const f=await fixture(true),counter=f.journal.db.query("SELECT value FROM counters WHERE id=?").get(f.identity.nodeId);
@@ -196,6 +248,19 @@ test("container authentication cannot replace the source terminal signature",asy
   const f=await fixture(),frames=sourceFrames(f),seal=JSON.parse(Buffer.from(frames.at(-1)!).toString());
   seal.signature=(seal.signature[0]==="A"?"B":"A")+seal.signature.slice(1);frames[frames.length-1]=Buffer.from(canonical(seal));
   await write(f,frames);await expect(inspectStreamBackup(f.outputPath,f.keyPath,f.options)).rejects.toThrow("ARCHIVE_SIGNATURE_INVALID");
+});
+
+for(const invalid of ["key","noncanonical bytes"] as const)test(`whole-record export and inspection reject invalid ${invalid} in a correctly hashed block`,async()=>{
+  const f=await fixture(),frames=sourceFrames(f),block=JSON.parse(Buffer.from(frames[1]!).toString()) as ArchiveBlock;
+  const fragment=block.fragments[0]!,bytes=Buffer.from(fragment.data,"base64");
+  expect(fragment.offset).toBe(0);expect(bytes.length).toBe(fragment.totalLength);
+  if(invalid==="key")fragment.key[0]="f".repeat(64);
+  else {fragment.data=Buffer.concat([bytes,Buffer.from(" ")]).toString("base64");fragment.totalLength++;}
+  const {hash:_hash,...unsigned}=block;block.hash=archiveBlockHash(unsigned);frames[1]=Buffer.from(canonical(block));
+  await expect(backupStreamFrames(stream(frames),f.outputPath,f.keyPath,f.options)).rejects.toThrow("ARCHIVE_RECORD_KEY_MISMATCH");
+  expect(existsSync(f.outputPath)).toBe(false);
+  const independentlyEncrypted=join(f.directory,"invalid-whole-record.sbx-backup");await writeStreamContainer(stream(frames),independentlyEncrypted,f.keyPath);
+  await expect(inspectStreamBackup(independentlyEncrypted,f.keyPath,f.options)).rejects.toThrow("ARCHIVE_RECORD_KEY_MISMATCH");
 });
 
 test("record fragments cannot switch identity inside a correctly rehashed block chain",async()=>{

@@ -25,6 +25,8 @@ function timeLabel(timestamp) { return Number.isSafeInteger(timestamp) && timest
 export function validateSnapshot(data) {
   if (!data || data.schemaVersion !== 1 || !Number.isSafeInteger(data.calculatedAt) || data.calculatedAt <= 0 || !Array.isArray(data.feeds) || typeof data.methodologyVersion !== "string" || typeof data.publishable !== "boolean") throw new Error("Invalid feed response");
   if (data.calculatedAt > Date.now() + 30_000 || Date.now() - data.calculatedAt > SNAPSHOT_MAX_AGE_MS) throw new Error("Snapshot is stale");
+  const scope = data.publicationScope;
+  if (scope !== undefined && (!scope || scope.kind !== "MODEL" || scope.model !== "B200" || Object.keys(scope).sort().join(",") !== "kind,model")) throw new Error("Invalid publication scope");
   const ids = new Set();
   for (const feed of data.feeds) {
     if (!feed || typeof feed.id !== "string" || ids.has(feed.id) || !["PROVIDER", "MODEL", "COMPOSITE"].includes(feed.kind) || !["READY", "UNAVAILABLE"].includes(feed.status) || !Array.isArray(feed.reasons) || !feed.reasons.every(value => typeof value === "string")) throw new Error("Invalid feed response");
@@ -36,13 +38,15 @@ export function validateSnapshot(data) {
   }
   const composite = data.feeds.find(feed => feed.kind === "COMPOSITE");
   const allModelsReady = MODELS.every(model => data.feeds.some(feed => feed.kind === "MODEL" && feed.model === model && qualified(feed)));
-  if ((qualified(composite) && !allModelsReady) || (data.publishable && (!qualified(composite) || !allModelsReady))) throw new Error("Incomplete publishable snapshot");
+  const scopedFeed = scope && data.feeds.find(feed => feed.id === "SBX:B200");
+  if (scope && (!scopedFeed || scopedFeed.kind !== "MODEL" || scopedFeed.provider !== null)) throw new Error("Invalid scoped model feed");
+  if ((qualified(composite) && !allModelsReady) || (data.publishable && (scope ? !qualified(scopedFeed) : !qualified(composite) || !allModelsReady))) throw new Error("Incomplete publishable snapshot");
   return data;
 }
 
 export function validateModeSnapshot(payload, selectedMode) {
   if (selectedMode === "demo") {
-    if (payload?.mode !== "CENTRALIZED_DEMO" || payload.publishable !== false || payload.pythPublished !== false) throw new Error("Invalid demo response");
+    if (payload?.mode !== "CENTRALIZED_DEMO" || payload.publishable !== false || payload.pythPublished !== false || payload.publicationScope !== undefined) throw new Error("Invalid demo response");
   } else if (selectedMode === "real") {
     if (payload?.mode !== undefined) throw new Error("Invalid real response");
     if (payload?.publishable !== true) throw new Error("Real prices are not yet available");
@@ -69,18 +73,24 @@ function renderProviders(feeds) {
   }
 }
 
-function render(snapshot) {
-  const composite = snapshot.feeds.find(feed => feed.kind === "COMPOSITE" && feed.id === "SBX");
-  setText("composite-price", formatPrice(composite));
+export function render(snapshot) {
+  const scoped = snapshot.publicationScope !== undefined;
+  const feeds = scoped ? snapshot.feeds.filter(feed => feed.id === "SBX:B200" && feed.kind === "MODEL") : snapshot.feeds;
+  const primary = feeds.find(feed => scoped ? feed.id === "SBX:B200" : feed.kind === "COMPOSITE" && feed.id === "SBX");
+  setText("composite-price", formatPrice(primary));
+  const scopeLabel = document.getElementById("publication-scope-label");
+  if (scopeLabel) { scopeLabel.hidden = !scoped; scopeLabel.textContent = scoped ? "B200 benchmark · USD per GPU-hour" : ""; }
+  document.querySelector(".composite-card")?.setAttribute("aria-label", scoped ? "B200 benchmark in USD per GPU-hour" : "Composite price in USD per GPU-hour");
   for (const model of MODELS) {
-    const feed = snapshot.feeds.find(item => item.kind === "MODEL" && item.model === model); const card = document.querySelector(`[data-model="${model}"]`);
+    const feed = feeds.find(item => item.kind === "MODEL" && item.model === model); const card = document.querySelector(`[data-model="${model}"]`);
     if (!card) continue;
     card.querySelector(".model-price").textContent = formatPrice(feed);
-    card.querySelector(".model-price").setAttribute("aria-label", qualified(feed) ? `${formatPrice(feed)} per GPU-hour` : `Unavailable: ${reason(feed)}`);
+    card.querySelector(".model-price").setAttribute("aria-label", scoped && model !== "B200" ? "Outside the B200 publication scope" : qualified(feed) ? `${formatPrice(feed)} per GPU-hour` : `Unavailable: ${reason(feed)}`);
   }
-  renderProviders(snapshot.feeds);
-  const times = snapshot.feeds.filter(qualified).map(feed => feed.observedAt);
-  const provenance = mode === "demo" ? "Centralized demo · Not published to Pyth" : "Locally qualified benchmark · Pyth publication unverified";
+  renderProviders(feeds);
+  const times = feeds.filter(qualified).map(feed => feed.observedAt);
+  const provenance = scoped ? "B200 only · Pyth publication unverified" : mode === "demo" ? "Centralized demo · Not published to Pyth" : "Locally qualified benchmark · Pyth publication unverified";
+  document.getElementById("connection-status")?.classList.toggle("visually-hidden", !scoped);
   setText("connection-status", times.length ? `${provenance} · Oldest source check: ${timeLabel(Math.min(...times))}` : `${provenance} · No current source prices`);
 }
 

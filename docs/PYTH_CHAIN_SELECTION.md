@@ -2,6 +2,10 @@
 
 Reviewed September 6, 2026. Scope: Base, Robinhood Chain and Solana. Research and RPC checks were read-only; no accounts, keys, transactions, deployments, gas funding or paid infrastructure were created.
 
+## Relationship to the proposed perps market
+
+Local reconciliation, September 8, 2026: this document orders **EVM/SVM consumer engineering**, beginning with Base. The [Pyth delivery decision](ORACLE_DELIVERY_OPTIONS.md) separately proposes managed HIP-3 delivery through an existing Hyperliquid operator for the B200 market. Base signed-update tests do not establish HIP-3 acceptance or venue consumption. Retain this tested consumer path; implement additional chain consumers only when a selected application needs them. Neither route changes the benchmark approval or source-rights gates.
+
 ## Decision
 
 Start with **Base Sepolia**, then qualify the same consumer architecture on **Base mainnet**. Use **Pyth Pro signed payloads** to preserve the numeric feed bindings already used by the publisher and readback monitor. This is an engineering sequencing decision, not a claim that Base has the largest GPU trading market.

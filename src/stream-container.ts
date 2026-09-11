@@ -15,6 +15,7 @@
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
 import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, linkSync, lstatSync, openSync, readSync, realpathSync, statfsSync, unlinkSync, writeSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { setImmediate } from "node:timers/promises";
 
 export const STREAM_CONTAINER_FORMAT = "SBX_NODE_RECOVERY_V2";
 const MAGIC = Buffer.from(`${STREAM_CONTAINER_FORMAT}\n`, "ascii");
@@ -140,7 +141,7 @@ export async function writeStreamContainer(frames: AsyncIterable<Uint8Array>, ou
   if (exists(file) || exists(partial)) failure("OUTPUT_EXISTS");
   const directoryFd = openSync(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   let fd: number | undefined, key: Buffer | undefined, iterator: AsyncIterator<Uint8Array> | undefined;
-  let finished = false, archiveBytes = 0, plaintextBytes = 0, count = 0;
+  let finished = false, archiveBytes = 0, plaintextBytes = 0, count = 0, bytesSinceYield = 0, framesSinceYield = 0;
   const hash = createHash("sha256");
   try {
     const salt = randomBytes(32);
@@ -182,6 +183,14 @@ export async function writeStreamContainer(frames: AsyncIterable<Uint8Array>, ou
       if (!(item.value instanceof Uint8Array) || item.value.byteLength < 1 || item.value.byteLength > budget.frame) failure("FRAME_BUDGET");
       if (!Number.isSafeInteger(plaintextBytes + item.value.byteLength) || count >= Number.MAX_SAFE_INTEGER - 1) failure("COUNTER_OVERFLOW");
       encrypt(DATA, item.value); plaintextBytes += item.value.byteLength; count++;
+      bytesSinceYield += item.value.byteLength; framesSinceYield++;
+      // A local source can resolve next() synchronously for the entire archive.
+      // Bound that microtask chain so timers, cancellation and native buffer
+      // cleanup can run even when the producer performs no asynchronous I/O.
+      if (bytesSinceYield >= 8 * 1024 * 1024 || framesSinceYield >= 64) {
+        await setImmediate(); checkAbort(options.signal);
+        bytesSinceYield = 0; framesSinceYield = 0;
+      }
     }
     encrypt(TERMINAL, terminal(count, plaintextBytes));
     checkAbort(options.signal);

@@ -4,6 +4,7 @@ import { fromMicros, toMicros } from "./decimal";
 import type { Journal, SqlDriver } from "./journal";
 import { MODELS, type Observation } from "./types";
 import { observationSchema } from "./validation";
+import { observationOfferKey } from "./offer-schedule";
 
 const DAY = 86_400_000;
 export const STUDY_LIMITS = Object.freeze({ maxCaptures: 100_000, maxObservations: 100_000, maxInputBytes: 256 * 1024 * 1024,
@@ -20,23 +21,20 @@ export interface StudyOptions {
   maxAnomalySamples?: number;
   maxGapSamples?: number;
 }
-interface CaptureHeader { id: number; collected_at: number; bytes: number }
+
 interface Bounds { count: number; first: number | null; last: number | null }
-interface Anomaly { code: string; captureId: number; observationIndex: number | null; seriesId?: string }
+
 interface Terms {
   provider: string; source: string; model: Observation["model"]; sku: string; region: string;
   procurement: Observation["procurement"]; priceBasis: Observation["priceBasis"]; tenancy: Observation["tenancy"];
   gpuCount: number; includes: string[]; priceScope: NonNullable<Observation["priceScope"]>;
   topology: NonNullable<Observation["topology"]>; minimumOrderGpuCount: number | null;
   currency: "USD"; unit: "USD_PER_GPU_HOUR";
+  instanceResources?: Observation["instanceResources"];
+  /** Opt-in exact offer identity; never emits retained source URLs or record IDs. */
+  offerIdentityHash?: string | null;
 }
-interface PricePoint {
-  captureId: number; knownAt: number; observedAt: number; observationLagMs: number; price: string; instancePrice: string;
-  priceEffectiveAt: number | null; expiresAt: number | null;
-  availability: NonNullable<Observation["availability"]>; availableGpuCount: number | null;
-  evidenceHash: string; evidenceRetainedAtCapture: boolean;
-}
-interface Series { id: string; terms: Terms; points: PricePoint[]; captureIds: Set<number>; issues: Set<string> }
+
 function bounded(value: number | undefined, fallback: number, maximum: number): number {
   const result = value ?? fallback;
   if (!Number.isSafeInteger(result) || result < 1 || result > maximum) throw new Error("Invalid operating study limit");
@@ -50,7 +48,8 @@ export function studyTerms(observation: Observation): Terms {
   return { provider: observation.provider, source: observation.source, model: observation.model, sku: observation.sku, region: observation.region,
     procurement: observation.procurement, priceBasis: observation.priceBasis, tenancy: observation.tenancy, gpuCount: observation.gpuCount,
     includes: [...observation.includes].sort(), priceScope: observation.priceScope ?? "PUBLIC", topology: observation.topology ?? "UNKNOWN",
-    minimumOrderGpuCount: observation.minimumOrderGpuCount ?? null, currency: observation.currency, unit: observation.unit };
+    minimumOrderGpuCount: observation.minimumOrderGpuCount ?? null, currency: observation.currency, unit: observation.unit,
+    ...(observation.instanceResources ? { instanceResources: { ...observation.instanceResources } } : {}) };
 }
 /** Signed basis-point change, rounded half away from zero to four decimals. */
 export function studyChangeBps(first: bigint, last: bigint): string {
@@ -61,7 +60,7 @@ export function studyChangeBps(first: bigint, last: bigint): string {
 }
 
 /** Uses SELECTs in one read transaction; the caller controls private storage/output. */
-export function operatingStudy(input: Pick<Journal, "db"> | SqlDriver, options: StudyOptions) {
+export function operatingStudy(input: Pick<Journal, "db"> | SqlDriver, options: StudyOptions & { exactB200OfferIdentity?: boolean }) {
   const db = "db" in input ? input.db : input;
   const asOf = timestamp(options.asOf ?? Date.now());
   const interval = bounded(options.expectedIntervalMs, 300_000, DAY);
@@ -77,8 +76,8 @@ export function operatingStudy(input: Pick<Journal, "db"> | SqlDriver, options: 
     if (from > asOf) throw new Error("Operating study start must not exceed its knowledge cutoff");
     const window = db.query("SELECT COUNT(*) AS count,MIN(collected_at) AS first,MAX(collected_at) AS last FROM captures WHERE typeof(collected_at)='integer' AND collected_at BETWEEN ? AND ?").get(from, asOf) as Bounds;
     const undatable = db.query("SELECT COUNT(*) AS count FROM captures WHERE typeof(collected_at)!='integer' OR collected_at<=0 OR collected_at>?").get(Number.MAX_SAFE_INTEGER) as { count: number };
-    const headers = db.query("SELECT id,collected_at,length(CAST(observations AS BLOB))+length(CAST(errors AS BLOB)) AS bytes FROM captures WHERE typeof(collected_at)='integer' AND collected_at BETWEEN ? AND ? ORDER BY collected_at,id LIMIT ?").all(from, asOf, limits.maxCaptures) as CaptureHeader[];
-    const reasons = new Set<string>(), anomalyCounts: Record<string, number> = {}, anomalySamples: Anomaly[] = [];
+    const headers = db.query("SELECT id,collected_at,length(CAST(observations AS BLOB))+length(CAST(errors AS BLOB)) AS bytes FROM captures WHERE typeof(collected_at)='integer' AND collected_at BETWEEN ? AND ? ORDER BY collected_at,id LIMIT ?").all(from, asOf, limits.maxCaptures) as { id: number; collected_at: number; bytes: number }[];
+    const reasons = new Set<string>(), anomalyCounts: Record<string, number> = {}, anomalySamples: { code: string; captureId: number; observationIndex: number | null; seriesId?: string }[] = [];
     let dataScanComplete = headers.length === window.count;
     if (!dataScanComplete) reasons.add("CAPTURE_LIMIT");
     if (undatable.count) { reasons.add("UNDATABLE_CAPTURE_ROWS"); dataScanComplete = false; }
@@ -105,7 +104,15 @@ export function operatingStudy(input: Pick<Journal, "db"> | SqlDriver, options: 
       for (const slot of occupied) { gap(slot); cursor = slot + 1; }
       gap(expectedBuckets);
     }
-    const series = new Map<string, Series>();
+    const series = new Map<string, {
+      id: string; terms: Terms; captureIds: Set<number>; issues: Set<string>;
+      points: {
+        captureId: number; knownAt: number; observedAt: number; observationLagMs: number; price: string; instancePrice: string;
+        priceEffectiveAt: number | null; expiresAt: number | null;
+        availability: NonNullable<Observation["availability"]>; availableGpuCount: number | null;
+        evidenceHash: string; evidenceRetainedAtCapture: boolean; observationHash: string;
+      }[];
+    }>();
     const mappings = new Map<string, Map<string, Set<string>>>();
     const evidenceDates = new Map<string, number | null>();
     let capturesParsed = 0, capturesWithErrors = 0, errorCount = 0, inputBytes = 0, observationsExamined = 0, validObservations = 0, retainedPoints = 0;
@@ -128,15 +135,19 @@ export function operatingStudy(input: Pick<Journal, "db"> | SqlDriver, options: 
         if (observationsExamined >= limits.maxObservations) { reasons.add("OBSERVATION_LIMIT"); dataScanComplete = false; break scan; }
         observationsExamined++;
         let observation: Observation;
-        // Cross-field refinements can throw on corrupted decimal inputs; one bad
-        // retained record must be reported without aborting the entire study.
+        // Report corrupt retained records without aborting the entire study.
         try { observation = observationSchema.parse(raw[index]) as Observation; }
         catch { anomaly("OBSERVATION_SCHEMA_INVALID", header.id, index); continue; }
         if (observation.observedAt > header.collected_at || observation.observedAt > asOf) { anomaly("OBSERVED_AFTER_KNOWLEDGE_TIME", header.id, index); continue; }
         validObservations++;
         firstObservationAt = Math.min(firstObservationAt ?? observation.observedAt, observation.observedAt);
         lastObservationAt = Math.max(lastObservationAt ?? observation.observedAt, observation.observedAt);
-        const commercialTerms = studyTerms(observation), id = hash(commercialTerms);
+        const commercialTerms = studyTerms(observation);
+        if (options.exactB200OfferIdentity) {
+          const key = observationOfferKey(observation);
+          commercialTerms.offerIdentityHash = key === undefined ? null : hash(key);
+        }
+        const id = hash(commercialTerms);
         let item = series.get(id);
         if (!item) {
           if (series.size >= limits.maxSeries) { reasons.add("SERIES_LIMIT"); dataScanComplete = false; continue; }
@@ -167,7 +178,8 @@ export function operatingStudy(input: Pick<Journal, "db"> | SqlDriver, options: 
         if (evidenceRetainedAtCapture) evidencePresent++; else evidenceMissing++;
         item.points.push({ captureId: header.id, knownAt: header.collected_at, observedAt: observation.observedAt, observationLagMs: header.collected_at - observation.observedAt, price: fromMicros(toMicros(observation.price)),
           instancePrice: fromMicros(toMicros(observation.instancePrice)), priceEffectiveAt: observation.priceEffectiveAt, expiresAt: observation.expiresAt,
-          availability: observation.availability ?? "UNKNOWN", availableGpuCount: observation.availableGpuCount, evidenceHash: observation.evidenceHash, evidenceRetainedAtCapture });
+          availability: observation.availability ?? "UNKNOWN", availableGpuCount: observation.availableGpuCount, evidenceHash: observation.evidenceHash, evidenceRetainedAtCapture,
+          observationHash: hash(observation) });
         item.captureIds.add(header.id); retainedPoints++;
       }
     }

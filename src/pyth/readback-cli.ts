@@ -7,6 +7,7 @@ import { z } from "zod";
 import { parseConfig, type NodeConfig } from "../config";
 import { canonical, hash, verifyBatch } from "../crypto";
 import { calculate } from "../engine";
+import { assertSnapshotPublicationScope } from "../publication";
 import type { SignedBatch } from "../types";
 import { parseMethodology, parseRegistry, signedBatchSchema } from "../validation";
 import { validatePythManifest, type PythManifest } from "./index";
@@ -186,6 +187,7 @@ function latestPrints(root:string,path:string,sourcePin:Pin,node:NodeConfig,mani
       // Reproduce only to verify the retained print; never fabricate a replacement.
       const reproduced=calculate(inputs,registry,methodology,snapshot.calculatedAt);
       if(hash(reproduced)!==hash(raw))fail("SNAPSHOT_REPRODUCTION_FAILED");
+      try {assertSnapshotPublicationScope(reproduced,manifest.publicationScope);}catch {fail("SNAPSHOT_PUBLICATION_SCOPE_MISMATCH");}
       const feeds=new Map(reproduced.feeds.map(feed=>[feed.id,feed]));
       const prints=manifest.bindings.map(binding=>{
         const feed=feeds.get(binding.indexFeedId);

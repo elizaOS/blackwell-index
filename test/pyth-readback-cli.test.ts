@@ -8,6 +8,7 @@ import { canonical, hash, signBatch } from "../src/crypto";
 import { calculate } from "../src/engine";
 import { Store } from "../src/store";
 import type { NodeConfig } from "../src/config";
+import type { Methodology } from "../src/types";
 import { PYTH_PROTOCOL, PYTH_SYMBOLS_URL, priceToPythMantissa, type PythManifest } from "../src/pyth";
 import { PYTH_LATEST_PRICE_URL, type PythReadbackResult } from "../src/pyth/readback";
 import { runPythReadbackCli } from "../src/pyth/readback-cli";
@@ -16,19 +17,24 @@ import { environment } from "./helpers";
 const TOKEN="isolated-readback-cli-test-token",directories:string[]=[],stores:Store[]=[];
 afterEach(()=>{for(const store of stores.splice(0))store.close();for(const directory of directories.splice(0))rmSync(directory,{recursive:true,force:true});});
 function save(path:string,value:unknown){writeFileSync(path,canonical(value),{mode:0o600});}
-function fixture() {
+function fixture(scoped = false) {
   const root=mkdtempSync(join(tmpdir(),"sbx-readback-cli-"));directories.push(root);chmodSync(root,0o700);
   mkdirSync(join(root,"data"),{mode:0o700});mkdirSync(join(root,"config"),{mode:0o700});
-  const now=Date.now(),e=environment(),registry=e.registry,methodology={...e.methodology,effectiveAt:now-10000};
+  const now=Date.now(),e=environment(),registry=e.registry,methodology:Methodology={...e.methodology,effectiveAt:now-10000};
+  if(scoped) {
+    methodology.publicationScope={kind:"MODEL",model:"B200",approvalEvidence:"Synthetic local readback scope"};
+    for(const model of ["B300","GB200","GB300"] as const)methodology.providerWeights[model]={};
+  }
   const batches=e.batches.map((batch,index)=>signBatch({...batch.payload,createdAt:now,observations:batch.payload.observations.map(observation=>({...observation,observedAt:now-2000,priceEffectiveAt:now-86400000}))},e.identities[index]!));
   const snapshot=calculate(batches,registry,methodology,now);expect(snapshot.publishable).toBe(true);
   const store=new Store(join(root,"data/node.sqlite"));stores.push(store);
   store.saveConfiguration(registry);store.saveConfiguration(methodology);for(const batch of batches)store.accept(batch,now,true);store.snapshot(snapshot);
   const config:NodeConfig={schemaVersion:1,network:registry.network,identityPath:"data/node-identity.json",databasePath:"data/node.sqlite",registryPath:"config/registry.local.json",methodologyPath:"config/methodology.local.json",
     host:"127.0.0.1",port:0,intervalMs:300000,collectors:[],peers:[],allowLoopbackPeers:false,pythManifestPath:"config/pyth-manifest.json"};
-  const bindings=snapshot.feeds.filter(feed=>feed.kind!=="PROVIDER").map((feed,index)=>({indexFeedId:feed.id,pythFeedId:index+1,symbol:`TEST.${feed.id}/USD`,exponent:-9,minPublishers:3}));
+  const bindings=snapshot.feeds.filter(feed=>scoped?feed.id==="SBX:B200":feed.kind!=="PROVIDER").map((feed,index)=>({indexFeedId:feed.id,pythFeedId:index+1,symbol:`TEST.${feed.id}/USD`,exponent:-9,minPublishers:3}));
   const manifest:PythManifest={schemaVersion:1,enabled:true,network:registry.network,methodologyHash:hash(methodology),registryHash:hash(registry),agentUrl:"ws://127.0.0.1:8910/v1/jrpc",maxAgeMs:30000,futureToleranceMs:1000,
-    approval:{status:"APPROVED",publisherPublicKey:"11111111111111111111111111111111",evidence:"Isolated wrapper test approval",verifiedAt:now-1000,expiresAt:now+3600000,protocol:PYTH_PROTOCOL,relayerUrls:["wss://isolated.example.test/v1/transaction"]},bindings};
+    approval:{status:"APPROVED",publisherPublicKey:"11111111111111111111111111111111",evidence:"Isolated wrapper test approval",verifiedAt:now-1000,expiresAt:now+3600000,protocol:PYTH_PROTOCOL,relayerUrls:["wss://isolated.example.test/v1/transaction"]},bindings,
+    ...(snapshot.publicationScope?{publicationScope:snapshot.publicationScope}:{})};
   const configuration={schemaVersion:1,enabled:true,pollIntervalMs:1000,requestTimeoutMs:1000,maxAgeMs:30000,maxConfidenceBps:100,maxPriceDeviationBps:100};
   save(join(root,"config/node.local.json"),config);save(join(root,config.registryPath),registry);save(join(root,config.methodologyPath),methodology);save(join(root,config.pythManifestPath!),manifest);save(join(root,"config/pyth-readback.json"),configuration);
   const statePath=join(root,"data/pyth-readback.sqlite"),lockPath=statePath+".lock",reports:Omit<PythReadbackResult,"state">[]=[],requests:string[]=[];
@@ -45,6 +51,18 @@ function persisted(path:string) {
   const db=new Database(path,{readonly:true,strict:true});
   try{return db.query("SELECT format,payload,payload_hash FROM pyth_readback_state WHERE id=1").get() as {format:string;payload:string;payload_hash:string}|null;}finally{db.close();}
 }
+
+test("readback reproduces a B200-only print and refuses an unscoped delivery manifest before requests", async () => {
+  const f = fixture(true), before = f.store.counts();
+  expect(await runPythReadbackCli([...f.args,"--init-state"],f.dependencies)).toBe(0);
+  expect(f.reports[0]!.status).toBe("UPSTREAM_OBSERVED"); expect(f.reports[0]!.feeds).toHaveLength(1);
+  expect(f.store.counts()).toEqual(before);
+  const mismatch = fixture(true); delete mismatch.manifest.publicationScope;
+  save(join(mismatch.root,mismatch.config.pythManifestPath!),mismatch.manifest);
+  expect(await runPythReadbackCli([...mismatch.args,"--init-state"],mismatch.dependencies)).toBe(1);
+  expect(mismatch.reports[0]!.code).toBe("SNAPSHOT_PUBLICATION_SCOPE_MISMATCH");
+  expect(mismatch.requests).toHaveLength(0); expect(existsSync(mismatch.statePath)).toBe(false);
+});
 
 test("signed CLI reopens protected state, carries timestamps and rolls back a rejected later feed",async()=>{
   // Synthetic EVM bytes and RPC acceptance exercise orchestration/storage only,

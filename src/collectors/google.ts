@@ -4,7 +4,6 @@ import { MODELS, type Collector, type CollectorContext, type CollectorResult, ty
 import { array, CollectionError, failure, jsonRequest, object, positiveInteger, string, timestamp } from "./http";
 
 interface Component { skuId: string; description: string; quantity: number; usageUnit: string; usageType: string }
-interface Machine { model: GpuModel; sku: string; region: string; gpuCount: number; procurement: Procurement; includes: string[]; components: Component[] }
 interface CatalogSku { record: Record<string, unknown>; hash: string; observedAt: number; sourceUrl: string }
 const MACHINES: Record<string, { model: GpuModel; gpuCount: number }> = {
   "a4-highgpu-8g": { model: "B200", gpuCount: 8 },
@@ -12,7 +11,7 @@ const MACHINES: Record<string, { model: GpuModel; gpuCount: number }> = {
   "a4x-maxgpu-4g-metal": { model: "GB300", gpuCount: 4 },
 };
 
-function parseMappings(raw: string | undefined): Machine[] {
+function parseMappings(raw: string | undefined): { model: GpuModel; sku: string; region: string; gpuCount: number; procurement: Procurement; includes: string[]; components: Component[] }[] {
   if (!raw) return [];
   let decoded: unknown;
   try { decoded = JSON.parse(raw); } catch { throw new CollectionError("INVALID_MAPPING", "GOOGLE_BILLING_SKU_MAP_JSON must be JSON"); }

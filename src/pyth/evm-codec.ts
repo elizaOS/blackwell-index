@@ -7,7 +7,6 @@ export const PYTH_EVM_CODEC_LIMITS = Object.freeze({ payloadBytes: 65535, feeds:
 export const PYTH_VERIFY_UPDATE_SELECTOR = "0x197e1a5a";
 const ENVELOPE_MAGIC = 706910618, PAYLOAD_MAGIC = 2479346549;
 const CHANNELS = { 1: "real_time", 2: "fixed_rate@50ms", 3: "fixed_rate@200ms", 4: "fixed_rate@1000ms" } as const;
-type Channel = typeof CHANNELS[keyof typeof CHANNELS];
 
 export class PythEvmCodecError extends Error {
   constructor(readonly code: string) { super(code); }
@@ -55,7 +54,7 @@ export interface DecodedSbxEvmFeed {
 export interface UnverifiedSbxEvmPayload {
   authentication: "NOT_VERIFIED";
   timestampUs: bigint;
-  channel: Channel;
+  channel: typeof CHANNELS[keyof typeof CHANNELS];
   feeds: DecodedSbxEvmFeed[];
 }
 

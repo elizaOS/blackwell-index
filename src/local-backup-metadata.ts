@@ -22,7 +22,7 @@ export interface RecoveryProvenanceSummary {
   linkedRecords:number;
   ciphertextVerification:"NOT_PERFORMED";
 }
-type Link={parent:string|undefined;createdAt:number};
+
 function fail(code:string):never {throw new Error(`LOCAL_RECOVERY_METADATA_${code}`);}
 function parseJson(text:string,maximum:number):unknown {
   if(Buffer.byteLength(text)>maximum)fail("RECORD_TOO_LARGE");
@@ -45,7 +45,7 @@ export function parseRecoveryProvenance(value:unknown):RecoveryProvenanceRecord 
  * Every parent edge must resolve to a verified receipt and move backward in time.
  */
 export function verifyRecoveryProvenance(journal:Journal,descriptor:ArchiveDescriptor):RecoveryProvenanceSummary {
-  const links=new Map<string,Link>();
+  const links=new Map<string,{parent:string|undefined;createdAt:number}>();
   const payloadQuery=journal.db.query("SELECT payload FROM configurations WHERE hash=?");
   for(const row of journal.db.query("SELECT hash,length(CAST(payload AS BLOB)) AS bytes FROM configurations ORDER BY hash").iterate() as Iterable<{hash:string;bytes:number}>) {
     if(!Number.isSafeInteger(row.bytes)||row.bytes<1||row.bytes>RECOVERY_PROVENANCE_LIMITS.configurationBytes)fail("CONFIGURATION_TOO_LARGE");
@@ -76,13 +76,13 @@ export function verifyRecoveryProvenance(journal:Journal,descriptor:ArchiveDescr
   const linkedRecords=descriptor.payload.recoveryProvenanceHash===undefined?0:depth(descriptor.payload.recoveryProvenanceHash);
   return {records:links.size,linkedRecords,ciphertextVerification:"NOT_PERFORMED"};
 }
-type Column={name:string;type:string;notnull:number;dflt_value:unknown;pk:number;hidden:number};
+
 const columns:Record<string,readonly [string,string,number,number][]>={
   local_journal_storage:[["id","INTEGER",0,1],["version","TEXT",1,0]],
   archive_recovery_provenance:[["id","INTEGER",0,1],["descriptor","TEXT",1,0],["seal","TEXT",1,0],["archive_sha256","TEXT",1,0],["archive_bytes","INTEGER",1,0]],
 };
 function validateColumns(journal:Journal,name:keyof typeof columns):void {
-  const actual=journal.db.query(`PRAGMA table_xinfo(${name})`).all() as Column[];
+  const actual=journal.db.query(`PRAGMA table_xinfo(${name})`).all() as {name:string;type:string;notnull:number;dflt_value:unknown;pk:number;hidden:number}[];
   const expected=columns[name]!;
   if(actual.length!==expected.length||actual.some((value,index)=>{
     const [column,type,notnull,pk]=expected[index]!;

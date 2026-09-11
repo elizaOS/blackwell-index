@@ -41,6 +41,25 @@ function limit(value:number|undefined,fallback:number):number {
 function boundedJson(text:string,maximum=ARCHIVE_LIMITS.recordBytes):unknown {
   if(Buffer.byteLength(text)>maximum)fail("RECORD_TOO_LARGE");return JSON.parse(text) as unknown;
 }
+/** One bounded record assembly policy for both export validation and import. */
+class RecordAssembler {
+  private current:{fragment:Pick<ArchiveFragment,"table"|"key"|"position">;bytes:Buffer;offset:number}|null=null;
+  get incomplete():boolean {return this.current!==null;}
+  accept(fragment:ArchiveFragment,bytes:Buffer) {
+    if(!this.current) {
+      if(fragment.offset!==0)fail("RECORD_FRAGMENT_GAP");
+      // Whole records reuse the bytes already validated by the block parser.
+      if(bytes.length===fragment.totalLength)return decodeArchiveRecord(fragment.table,fragment.key,bytes);
+      this.current={fragment:{table:fragment.table,key:fragment.key,position:fragment.position},bytes:Buffer.allocUnsafe(fragment.totalLength),offset:0};
+    }
+    const current=this.current;
+    if(fragment.table!==current.fragment.table||fragment.position!==current.fragment.position||canonical(fragment.key)!==canonical(current.fragment.key)||fragment.totalLength!==current.bytes.length||fragment.offset!==current.offset)fail("RECORD_FRAGMENT_MISMATCH");
+    current.bytes.set(bytes,current.offset);current.offset+=bytes.length;
+    if(current.offset!==current.bytes.length)return null;
+    this.current=null;
+    return decodeArchiveRecord(fragment.table,fragment.key,current.bytes);
+  }
+}
 function checkpoint(database:Database,options:StreamRecoveryOptions):void {
   options.signal?.throwIfAborted();
   const pages=(database.query("PRAGMA page_count").get() as {page_count:number}).page_count;
@@ -200,7 +219,8 @@ async function stage(inputPath:string,keyPath:string,options:StreamRecoveryOptio
     const first=await reader.next();if(first.done)fail("DESCRIPTOR_MISSING");
     const descriptor=parseArchiveDescriptor(new TextDecoder("utf-8",{fatal:true}).decode(first.value),options.expectedNodeId,options.expectedRelease);
     if(descriptor.payload.counts.reduce((sum,value)=>sum+value,0)>maximumRecords)fail("RECORD_BUDGET");
-    let current:{fragment:ArchiveFragment;bytes:Buffer;offset:number}|null=null,blockCount=0,totalBytes=0,totalRecords=0;
+    const records=new RecordAssembler();
+    let blockCount=0,totalBytes=0,totalRecords=0;
     let previousHash:string|null=null,cursor:ArchiveCursor={table:0,position:0,offset:0},seal:ArchiveSeal|null=null,summary:StreamContainerSummary|undefined;
     const counts=ARCHIVE_TABLES.map(()=>0);
     for(;;) {
@@ -208,35 +228,28 @@ async function stage(inputPath:string,keyPath:string,options:StreamRecoveryOptio
       if(seal)fail("TRAILING_SOURCE_FRAME");
       const text=new TextDecoder("utf-8",{fatal:true}).decode(next.value),raw=boundedJson(text,ARCHIVE_LIMITS.transportBytes);
       if(raw&&typeof raw==="object"&&"payload" in raw&&(raw as {payload?:{format?:string}}).payload?.format==="SBX_CHECKPOINT_SEAL_V2") {
-        if(current)fail("TRUNCATED_RECORD");
+        if(records.incomplete)fail("TRUNCATED_RECORD");
         if(canonical(cursor)!==canonical({table:ARCHIVE_TABLES.length,position:0,offset:0}))fail("TERMINAL_CURSOR_MISSING");
         seal=parseArchiveSeal(raw,descriptor,{blockCount,totalBytes,counts,finalHash:previousHash});continue;
       }
-      const block=parseArchiveBlock(raw,descriptor,{index:blockCount,previousHash,cursor});
+      const {block,fragmentBytes}=parseArchiveBlock(raw,descriptor,{index:blockCount,previousHash,cursor});
       disk(directory,ARCHIVE_LIMITS.recordBytes*2,options);
       database.transaction(()=>{
-        for(const fragment of block.fragments) {
-          const bytes=Buffer.from(fragment.data,"base64");totalBytes+=bytes.byteLength;
+        for(const [fragmentIndex,fragment] of block.fragments.entries()) {
+          const bytes=fragmentBytes[fragmentIndex]!;totalBytes+=bytes.byteLength;
           if(!Number.isSafeInteger(totalBytes))fail("BYTE_OVERFLOW");
-          if(!current) {
-            if(fragment.offset!==0)fail("RECORD_FRAGMENT_GAP");
-            current={fragment,bytes:Buffer.allocUnsafe(fragment.totalLength),offset:0};
-          }
-          if(fragment.table!==current.fragment.table||fragment.position!==current.fragment.position||canonical(fragment.key)!==canonical(current.fragment.key)||fragment.totalLength!==current.bytes.length||fragment.offset!==current.offset)fail("RECORD_FRAGMENT_MISMATCH");
-          current.bytes.set(bytes,current.offset);current.offset+=bytes.length;
-          if(current.offset===current.bytes.length) {
-            const row=decodeArchiveRecord(fragment.table,fragment.key,current.bytes);
+          const row=records.accept(fragment,bytes);
+          if(row) {
             inserts[fragment.table]!.run(...row.map(value=>typeof value==="object"&&value!==null?Buffer.from(value.base64,"base64"):value));
             counts[fragment.table]=counts[fragment.table]!+1;totalRecords++;
             if(totalRecords>maximumRecords||counts[fragment.table]!>descriptor.payload.counts[fragment.table]!)fail("RECORD_COUNT_MISMATCH");
-            current=null;
           }
         }
       })();
       blockCount++;previousHash=block.hash;cursor=block.end;
       checkpoint(database,options);await setImmediate();options.signal?.throwIfAborted();
     }
-    if(!seal||!summary||current)fail("SOURCE_SEAL_MISSING");
+    if(!seal||!summary||records.incomplete)fail("SOURCE_SEAL_MISSING");
     // These local indexes are operational metadata, never archive-supplied SQL.
     database.exec("CREATE INDEX IF NOT EXISTS stream_capture_time ON captures(collected_at); CREATE INDEX IF NOT EXISTS stream_cycle_time ON collection_captures(collected_at)");
     const verified=await verifyStreamDatabase(journal,descriptor,options);
@@ -249,9 +262,9 @@ async function stage(inputPath:string,keyPath:string,options:StreamRecoveryOptio
     // Reviewed Store startup can explicitly opt back into WAL afterward.
     const mode=database.query("PRAGMA journal_mode=DELETE").get() as {journal_mode:string};
     if(mode.journal_mode!=="delete")fail("PORTABLE_DATABASE_CHECKPOINT");
-    database.close();database=undefined;
+    database.close(true);database=undefined;
     return {directory,path,descriptor,seal,summary,verified};
-  } catch(error) {try{database?.close();}finally{rmSync(directory,{recursive:true,force:true});}throw error;}
+  } catch(error) {try{database?.close(true);}finally{rmSync(directory,{recursive:true,force:true});}throw error;}
   finally {await reader?.return(undefined as never);}
 }
 function publicSummary(data:Awaited<ReturnType<typeof stage>>) {
@@ -273,7 +286,7 @@ export async function backupStreamFrames(frames:AsyncIterable<Uint8Array>,output
   async function* verifiedFrames() {
     let index=0,totalBytes=0,totalRecords=0,previousHash:string|null=null,cursor:ArchiveCursor={table:0,position:0,offset:0};
     const counts=ARCHIVE_TABLES.map(()=>0);
-    let current:{fragment:ArchiveFragment;bytes:Buffer;offset:number}|null=null;
+    const records=new RecordAssembler();
     for await(const frame of frames) {
       options.signal?.throwIfAborted();
       if(frame.byteLength>ARCHIVE_LIMITS.transportBytes)fail("FRAME_TOO_LARGE");
@@ -285,24 +298,17 @@ export async function backupStreamFrames(frames:AsyncIterable<Uint8Array>,output
         if(seal)fail("TRAILING_SOURCE_FRAME");
         const raw=boundedJson(text,ARCHIVE_LIMITS.transportBytes);
         if(raw&&typeof raw==="object"&&"payload" in raw&&(raw as {payload?:{format?:string}}).payload?.format==="SBX_CHECKPOINT_SEAL_V2") {
-          if(current)fail("TRUNCATED_RECORD");
+          if(records.incomplete)fail("TRUNCATED_RECORD");
           if(canonical(cursor)!==canonical({table:ARCHIVE_TABLES.length,position:0,offset:0}))fail("TERMINAL_CURSOR_MISSING");
           seal=parseArchiveSeal(raw,descriptor,{blockCount:index,totalBytes,counts,finalHash:previousHash});
         } else {
-          const block=parseArchiveBlock(raw,descriptor,{index,previousHash,cursor});
-          for(const fragment of block.fragments) {
-            const bytes=Buffer.from(fragment.data,"base64");totalBytes+=bytes.byteLength;
+          const {block,fragmentBytes}=parseArchiveBlock(raw,descriptor,{index,previousHash,cursor});
+          for(const [fragmentIndex,fragment] of block.fragments.entries()) {
+            const bytes=fragmentBytes[fragmentIndex]!;totalBytes+=bytes.byteLength;
             if(!Number.isSafeInteger(totalBytes))fail("BYTE_OVERFLOW");
-            if(!current) {
-              if(fragment.offset!==0)fail("RECORD_FRAGMENT_GAP");
-              current={fragment,bytes:Buffer.allocUnsafe(fragment.totalLength),offset:0};
-            }
-            if(fragment.table!==current.fragment.table||fragment.position!==current.fragment.position||canonical(fragment.key)!==canonical(current.fragment.key)||fragment.totalLength!==current.bytes.length||fragment.offset!==current.offset)fail("RECORD_FRAGMENT_MISMATCH");
-            current.bytes.set(bytes,current.offset);current.offset+=bytes.length;
-            if(current.offset===current.bytes.length) {
-              decodeArchiveRecord(fragment.table,fragment.key,current.bytes);counts[fragment.table]=counts[fragment.table]!+1;totalRecords++;
+            if(records.accept(fragment,bytes)) {
+              counts[fragment.table]=counts[fragment.table]!+1;totalRecords++;
               if(totalRecords>maximumRecords||counts[fragment.table]!>descriptor.payload.counts[fragment.table]!)fail("RECORD_COUNT_MISMATCH");
-              current=null;
             }
           }
           index++;previousHash=block.hash;cursor=block.end;
@@ -310,7 +316,7 @@ export async function backupStreamFrames(frames:AsyncIterable<Uint8Array>,output
       }
       yield frame;
     }
-    if(!descriptor||!seal||current)fail("SOURCE_SEAL_MISSING");
+    if(!descriptor||!seal||records.incomplete)fail("SOURCE_SEAL_MISSING");
   }
   const result=await writeStreamContainer(verifiedFrames(),outputPath,keyPath,options);
   return {...result,sourceNodeId:descriptor!.payload.source.nodeId,sourceRelease:descriptor!.payload.source.release,checkpointId:descriptor!.payload.checkpointId,
