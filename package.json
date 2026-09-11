@@ -5,6 +5,7 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
+    "research:transactions": "bun scripts/transaction-research.ts",
     "setup": "bun src/cli.ts setup",
     "start": "bun src/cli.ts run",
     "collect": "bun src/cli.ts collect",
