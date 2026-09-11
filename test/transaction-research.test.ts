@@ -94,6 +94,8 @@ describe("private transaction research", () => {
     expect(TransactionRecord.safeParse(record({secret:"unwanted"})).success).toBe(false);
     expect(TransactionRecord.safeParse(record({currency:"EUR"})).success).toBe(false);
     expect(TransactionRecord.safeParse(record({serviceEnd:0})).success).toBe(false);
+    expect(TransactionRecord.safeParse(record({grossComputeUsd:"NaN"})).success).toBe(false);
+    expect(TransactionRecord.safeParse(record({paidAllocatedUsd:"-1"})).success).toBe(false);
   });
   test("backtest reports missing windows without filling gaps", () => {
     const r=backtestTransactions(pair(),[config(),config({windowStart:7200000,windowEnd:8000000,asOf:8000000})]);

@@ -26,6 +26,8 @@ export const TransactionRecord = z.object({
 }).strict().superRefine((r, ctx) => {
   const fail = (message: string) => ctx.addIssue({code: "custom", message});
   if (r.serviceEnd <= r.serviceStart) fail("Service interval must be positive");
+  // Zod may run object refinements after a field-pattern failure.
+  if ([r.grossComputeUsd,r.discountUsd,r.refundUsd,r.mandatoryComputeFeesUsd,r.netComputeUsd,...(r.paidAllocatedUsd===null?[]:[r.paidAllocatedUsd])].some(value=>!amount.safeParse(value).success)) return;
   const gross = micros(r.grossComputeUsd), discount = micros(r.discountUsd);
   const refund = micros(r.refundUsd), fees = micros(r.mandatoryComputeFeesUsd);
   if (gross + fees - discount - refund !== micros(r.netComputeUsd)) fail("Net charges do not reconcile");
