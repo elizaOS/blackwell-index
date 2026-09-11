@@ -51,6 +51,8 @@ Each matched SKU needs reports from at least the configured minimum independent 
 
 Read the [methodology](docs/METHODOLOGY.md), [source research](docs/PROVIDERS.md), [security model](docs/SECURITY.md), and [implementation plan](docs/IMPLEMENTATION_PLAN.md).
 
+For licensed delivered-usage and invoice records, the offline [transaction research workflow](docs/TRANSACTION_RESEARCH.md) compares GPU-hour-weighted estimators and historical coverage. It is private, requires explicit evaluation permission, and cannot publish or change production weights. Use the [data intake checklist](docs/TRANSACTION_DATA_INTAKE.md) before integrating a contributor.
+
 ## API
 
 | Endpoint | Purpose |
