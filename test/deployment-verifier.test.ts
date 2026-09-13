@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { validateDemo, verifyDeployment } from "../scripts/verify-deployment";
-import { defaultMethodology, defaultRegistry } from "../src/config";
+import { defaultMethodology } from "../src/config";
 import { hostedRegistry } from "../src/cloudflare/config";
 import { hash, nodeIdFor } from "../src/crypto";
 import { centralizedDemo, demoRegistry } from "../src/demo";
