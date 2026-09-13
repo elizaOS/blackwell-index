@@ -3,12 +3,13 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { defaultMethodology, defaultRegistry } from "../src/config";
+import { defaultMethodology } from "../src/config";
+import { hostedRegistry } from "../src/cloudflare/config";
 import { hash } from "../src/crypto";
 import { fromMicros, median, toMicros, weighted } from "../src/decimal";
 import { demoRegistry } from "../src/demo";
 import type { Feed, Methodology, Registry } from "../src/types";
-import { parseMethodology, parseRegistry } from "../src/validation";
+import { parseMethodology } from "../src/validation";
 
 type RecordValue = Record<string, unknown>;
 const MODELS = ["B200", "B300", "GB200", "GB300"];
@@ -122,7 +123,7 @@ export async function verifyDeployment(args: string[] = process.argv.slice(2), r
   requireValue(localConfigBytes.length <= MAX_BYTES, "Local deployment policy exceeds verifier byte limit");
   const localVars = record(record(JSON.parse(localConfigBytes.toString("utf8")), "local deployment config").vars, "local deployment variables");
   requireValue(typeof localVars.SBX_NETWORK === "string", "Local deployment network is missing");
-  const registry = parseRegistry(typeof localVars.SBX_REGISTRY_JSON === "string" ? JSON.parse(localVars.SBX_REGISTRY_JSON) : defaultRegistry(localVars.SBX_NETWORK));
+  const registry = hostedRegistry(localVars.SBX_NETWORK, typeof localVars.SBX_REGISTRY_JSON === "string" ? localVars.SBX_REGISTRY_JSON : undefined);
   const methodology = parseMethodology(typeof localVars.SBX_METHODOLOGY_JSON === "string" ? JSON.parse(localVars.SBX_METHODOLOGY_JSON) : defaultMethodology());
   requireValue(registry.network === localVars.SBX_NETWORK, "Local deployment network differs from registry");
   const failures: { check: string; error: string }[] = [];

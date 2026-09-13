@@ -4,12 +4,13 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { validateDemo, verifyDeployment } from "../scripts/verify-deployment";
 import { defaultMethodology, defaultRegistry } from "../src/config";
+import { hostedRegistry } from "../src/cloudflare/config";
 import { hash, nodeIdFor } from "../src/crypto";
 import { centralizedDemo, demoRegistry } from "../src/demo";
 import { MODELS, type Observation } from "../src/types";
 
 const NOW = 1788723000000, RELEASE = "a".repeat(40), PRIVATE = "private-body-must-not-be-reported";
-const registry = defaultRegistry("sbx-mainnet"), methodology = defaultMethodology();
+const registry = hostedRegistry("sbx-mainnet"), methodology = defaultMethodology();
 const unusedIdentity = { nodeId: "synthetic-unused", publicKey: "synthetic-unused", privateKeyPem: "synthetic-unused" };
 function observations(now: number): Observation[] {
   return MODELS.map((model, index) => ({ schemaVersion: 1, provider: "oracle", source: "oracle-public", sku: model, model, region: "us", procurement: "ON_DEMAND", priceBasis: "LIST", tenancy: "EXCLUSIVE", currency: "USD", unit: "USD_PER_GPU_HOUR", price: `${index + 1}.000000`, instancePrice: `${(index + 1) * 8}.000000`, gpuCount: 8, includes: [], availableGpuCount: null, observedAt: now - 1000, priceEffectiveAt: null, expiresAt: null, sourceUrl: "https://apexapps.oracle.com/prices", evidenceHash: "b".repeat(64) }));
