@@ -9,6 +9,7 @@ import { CloudflareJournal, DurableSqlDriver } from "./sql";
 import { createHostedExport } from "../hosted-export";
 import { beginCheckpoint, initializeCheckpointStorage, readCheckpointBlock, releaseCheckpoint, sealCheckpoint } from "../checkpoint";
 import { ARCHIVE_OPERATOR_ERRORS } from "../archive-protocol";
+import { limitPriceRequest, publicPrice } from "./public-price";
 
 const NODE_NAMES = ["primary", "secondary"] as const;
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
@@ -66,6 +67,12 @@ export class SbxNode extends DurableObject<WorkerEnvironment> {
     if (path === "/internal/wake" && request.method === "POST") {
       if (await this.ctx.storage.getAlarm() === null) await this.ctx.storage.setAlarm(Date.now() + 1000);
       return json({scheduled:true});
+    }
+    if (path === "/v1/price") {
+      if (request.method !== "GET") return json({error:"METHOD_NOT_ALLOWED"},405);
+      const result=latestDemoResponse(this.journal.db,demoRegistry(this.config.registry),this.config.methodology,this.identity,Date.now());
+      const body=result.status===200 ? publicPrice(result.body) : {price:null};
+      return json(body,body.price===null ? 503 : 200);
     }
     if (path === "/v1/demo" && request.method === "GET") {
       const result=latestDemoResponse(this.journal.db,demoRegistry(this.config.registry),this.config.methodology,this.identity,Date.now());
@@ -167,6 +174,10 @@ export default {
       url.pathname = prefixed[2] ?? "/v1/status";
     }
     if (url.pathname.startsWith("/v1/") || url.pathname === "/healthz") {
+      if (["/v1/price", "/v1/demo"].includes(url.pathname)) {
+        const limited = await limitPriceRequest(request, env.SBX_PRICE_LIMITER);
+        if (limited) return secured(limited);
+      }
       const headers = new Headers(request.headers);
       headers.set("x-sbx-client-ip", request.headers.get("CF-Connecting-IP") ?? "unknown");
       const upstream = new Request(url, {method:request.method,headers,body:request.body,redirect:"manual"});

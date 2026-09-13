@@ -53,6 +53,7 @@ let externalCalls=0;
 const mf=new Miniflare(convertV4MiniflareOptions({unsafeInspectDurableObjects:true,workers:[{
   name:"isolated-capacity",modules:true,script:production+"\n"+fixtureModule,
   compatibilityDate:"2026-09-06",compatibilityFlags:["nodejs_compat"],
+  ratelimits:{SBX_PRICE_LIMITER:{namespace_id:"2026091301",simple:{limit:60,period:60}}},
   bindings:{SBX_NETWORK:"sbx-runtime-test",SBX_OPERATOR_GROUP:"isolated-test",SBX_COLLECTORS:"",SBX_COLLECTION_INTERVAL_MS:"86400000",SBX_RELEASE:release},
   durableObjects:{SBX_NODES:{className:"FixtureNode",useSQLite:true}},serviceBindings:{ASSETS:()=>new Response("Not found",{status:404})},
   outboundService:()=>{externalCalls++;throw new Error("TEST_EXTERNAL_NETWORK_FORBIDDEN");},

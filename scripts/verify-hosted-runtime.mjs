@@ -13,6 +13,7 @@ const mf=new Miniflare(convertV4MiniflareOptions({workers:[{
   compatibilityDate:"2026-09-06",compatibilityFlags:["nodejs_compat"],
   bindings:{SBX_NETWORK:"sbx-runtime-test",SBX_OPERATOR_GROUP:"isolated-test",SBX_COLLECTORS:"",SBX_COLLECTION_INTERVAL_MS:"86400000",SBX_RELEASE:release},
   durableObjects:{SBX_NODES:{className:"SbxNode",useSQLite:true}},
+  ratelimits:{SBX_PRICE_LIMITER:{namespace_id:"2026091301",simple:{limit:60,period:60}}},
   serviceBindings:{ASSETS:()=>new Response("Not found",{status:404})},
   outboundService:()=>{throw new Error("TEST_EXTERNAL_NETWORK_FORBIDDEN");},
 },{name:"isolated-client",modules:true,script:"export default {fetch(){return new Response('Not found',{status:404})}}",
@@ -27,6 +28,9 @@ function cli(args,input) {
 try {
   const worker=await mf.getWorker("isolated-sbx");
   const before=await (await worker.fetch("https://primary.blackwellindex.com/v1/status")).json();
+  const price=await worker.fetch("https://primary.blackwellindex.com/v1/price");
+  assert.equal(price.status,503);assert.deepEqual(await price.json(),{price:null});
+  assert.equal((await worker.fetch("https://primary.blackwellindex.com/v1/price",{method:"POST"})).status,405);
   const demoResponse=await worker.fetch("https://primary.blackwellindex.com/v1/demo");
   assert.equal(demoResponse.status,200);
   const demo=await demoResponse.json();
@@ -80,5 +84,12 @@ try {
   for(const [path,method] of [["/export/unknown","POST"],["/export/primary","GET"],["/export/primary?bypass=1","POST"],
     ["/archive/unknown/begin","POST"],["/archive/primary/begin","GET"],["/archive/primary/begin?bypass=1","POST"],["/archive/primary/not-a-checkpoint/seal","POST"]])
     assert.equal((await recovery.fetch(`https://recovery.internal${path}`,{method})).status,404);
-  console.log(JSON.stringify({status:"PASS",runtime:"workerd",privateServiceBinding:true,verifiedEmptyDemoRoute:true,verifiedEncryptedRestore:true,verifiedStreamingRestore:true,checkpointRetry:true,identityUnchanged:true,publicExportRequestsDenied:privatePaths.length*2,providerRequests:0}));
+  let limited=false;
+  for(let i=0;i<70;i++){
+    const response=await worker.fetch("https://secondary.blackwellindex.com/node/primary/v1/price?attempt="+i);
+    if(response.status===429){assert.equal(response.headers.get("retry-after"),"60");limited=true;break;}
+    assert.equal(response.status,503);
+  }
+  assert(limited,"Native edge limiter must reject excess requests");
+  console.log(JSON.stringify({status:"PASS",runtime:"workerd",compactPrice:true,rateLimited:true,privateServiceBinding:true,verifiedEmptyDemoRoute:true,verifiedEncryptedRestore:true,verifiedStreamingRestore:true,checkpointRetry:true,identityUnchanged:true,publicExportRequestsDenied:privatePaths.length*2,providerRequests:0}));
 } finally {clearTimeout(timeout);await mf.dispose();rmSync(scratch,{recursive:true,force:true});}
