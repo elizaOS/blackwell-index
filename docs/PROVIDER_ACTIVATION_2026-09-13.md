@@ -6,6 +6,8 @@ The hosted collectors use existing server-side credentials. Their prices are off
 
 Providers is removed from the navigation. The page remains available at /providers.html.
 
+Live verification found 101 observations on each hosted node: Oracle 4, Azure 38, Verda 22, Runpod 1, Hyperstack 2 and AWS 34. AWS returns three NO_DATA diagnostics for uncovered queries. The deployment verifier reports partial catalog coverage as a warning only when observations exist and NO_DATA is the sole error code; authentication, transport and other failures remain blocking. Missing prices stay unavailable.
+
 ## Remaining integrations
 
 - Prime Intellect: authenticated availability requests returned no qualifying inventory; do not invent prices.

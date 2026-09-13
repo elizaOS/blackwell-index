@@ -127,6 +127,7 @@ export async function verifyDeployment(args: string[] = process.argv.slice(2), r
   const methodology = parseMethodology(typeof localVars.SBX_METHODOLOGY_JSON === "string" ? JSON.parse(localVars.SBX_METHODOLOGY_JSON) : defaultMethodology());
   requireValue(registry.network === localVars.SBX_NETWORK, "Local deployment network differs from registry");
   const failures: { check: string; error: string }[] = [];
+  const warnings: { url: string; collector: string; code: string }[] = [];
   const assets: { url: string; bytes: number; sha256: string }[] = [];
   const redirects: { url: string; status: number; location: string }[] = [];
   const nodes: RecordValue[] = [];
@@ -196,10 +197,13 @@ export async function verifyDeployment(args: string[] = process.argv.slice(2), r
     const sources = cycle.sources.map(value => {
       const source = record(value, "source");
       requireValue(typeof source.collector === "string" && typeof source.status === "string" && typeof source.observations === "number" && Number.isSafeInteger(source.observations) && source.observations >= 0 && typeof source.errors === "number" && Number.isSafeInteger(source.errors) && source.errors >= 0, "Invalid source diagnostic");
-      return { collector: source.collector, status: source.status, observations: source.observations, errors: source.errors };
+      const partialCatalog = source.status === "DEGRADED" && source.observations > 0 && source.errors > 0
+        && Array.isArray(source.errorCodes) && source.errorCodes.length === 1 && source.errorCodes[0] === "NO_DATA";
+      if (partialCatalog) warnings.push({ url: base.origin, collector: source.collector, code: "PARTIAL_CATALOG_COVERAGE" });
+      return { collector: source.collector, status: source.status, observations: source.observations, errors: source.errors, partialCatalog };
     });
     requireValue(sources.reduce((total, source) => total + source.observations, 0) === cycle.realObservationCount, "Source counts do not reconcile to real observations");
-    requireValue(sources.every(source => source.errors === 0 && source.status === "COLLECTED"), "One or more configured sources failed or degraded");
+    requireValue(sources.every(source => source.errors === 0 && source.status === "COLLECTED" || source.partialCatalog), "One or more configured sources failed or degraded");
     requireValue(snapshot.publishable === false && ready.publishable === false, "Development benchmark is unexpectedly publishable");
     requireValue(snapshot.registryHash === status.registryHash && snapshot.methodologyHash === status.methodologyHash, "Status and feed configuration hashes differ");
     requireValue(Array.isArray(snapshot.feeds) && snapshot.feeds.length > 0, "Feed response is empty or invalid");
@@ -259,7 +263,7 @@ export async function verifyDeployment(args: string[] = process.argv.slice(2), r
     requireValue(publicStatus.nodeId === primaryNode.nodeId && record(publicStatus.hosting, "site hosting").release === values.release, "Public index site does not route to the expected primary release");
   });
   return { status: failures.length ? "FAIL" : "PASS", mode: "DEVELOPMENT_NETWORK", expectedRelease: values.release,
-    checkedAt: new Date().toISOString(), elapsedMs: Date.now() - startedAt, checks, failures,
+    checkedAt: new Date().toISOString(), elapsedMs: Date.now() - startedAt, checks, failures, warnings,
     assets: assets.sort((a, b) => a.url.localeCompare(b.url)), nodes: nodes.sort((a, b) => String(a.url).localeCompare(String(b.url))),
     demos: demos.sort((a, b) => String(a.url).localeCompare(String(b.url))),
     aliases: redirects.sort((a, b) => a.url.localeCompare(b.url)), privateRoutes: { checked: privateRoutesChecked, statuses: deniedStatuses },

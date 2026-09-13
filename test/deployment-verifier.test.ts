@@ -138,6 +138,20 @@ for (const change of ["unavailable-value", "ready-null", "confidence", "kind", "
 });
 
 type Override = (url: URL, method: string, normal: Response) => Response | Promise<Response>;
+for (const codes of [["NO_DATA"], ["AUTH_FAILED"], ["NO_DATA", "HTTP_ERROR"], []]) test("partial catalog acceptance is limited to explicit NO_DATA: " + codes.join(","), async () => {
+  const fixture = deploymentFixture((url, _method, normal) => {
+    if (url.pathname !== "/v1/status") return normal;
+    return normal.json().then(value => {
+      const source = (value as { collection: { lastCycle: { sources: Array<Record<string, unknown>> } } }).collection.lastCycle.sources[0]!;
+      Object.assign(source, { status: "DEGRADED", errors: 3, errorCodes: codes });
+      return fixture.body(value);
+    });
+  });
+  const result = (await verifyDeployment(["--release", RELEASE], fixture.request))!;
+  expect(result.status).toBe(codes.length === 1 && codes[0] === "NO_DATA" ? "PASS" : "FAIL");
+  if (result.status === "PASS") expect((result.warnings as unknown[]).length).toBe(3);
+});
+
 function deploymentFixture(override: Override = (_url, _method, normal) => normal) {
   const requests: Array<{ url: string; method: string }> = [], now = Date.now();
   const value = demo(now), empty = { ...value, registryHash: hash(registry), methodologyHash: hash(methodology), feeds: value.feeds.map(feed => ({ ...feed, status: "UNAVAILABLE", price: null, confidence: null, observedAt: null })) };
