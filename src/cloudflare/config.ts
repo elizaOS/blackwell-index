@@ -7,6 +7,7 @@ import type { SbxNode } from "./index";
 // Runtime declarations are generated separately: Worker vars must not become required Bun ProcessEnv fields.
 export type WorkerEnvironment = {
   ASSETS: Fetcher;
+  SBX_PRICE_LIMITER: RateLimit;
   SBX_NODES: DurableObjectNamespace<SbxNode>;
   SBX_NETWORK: string;
   SBX_OPERATOR_GROUP: string;

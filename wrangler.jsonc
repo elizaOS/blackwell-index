@@ -6,6 +6,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "preview_urls": false,
+  "ratelimits": [{"name":"SBX_PRICE_LIMITER","namespace_id":"2026091301","simple":{"limit":60,"period":60}}],
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
