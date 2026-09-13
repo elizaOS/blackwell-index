@@ -18,6 +18,15 @@ export type WorkerEnvironment = {
   SBX_RELEASE?: string;
 } & Partial<Record<string, unknown>>;
 
+export function hostedRegistry(network: string, override?: string) {
+  const registry = parseRegistry(override ? JSON.parse(override) : defaultRegistry(network));
+  // Operator-confirmed collection permission, 2026-09-13. Not publication rights.
+  if (!override) for (const provider of registry.providers) {
+    if (["runpod", "hyperstack", "aws"].includes(provider.id)) provider.rights.collect = true;
+  }
+  return registry;
+}
+
 export function runtimeConfig(env: WorkerEnvironment) {
   const network = env.SBX_NETWORK;
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(network)) throw new Error("INVALID_NETWORK");
@@ -27,7 +36,7 @@ export function runtimeConfig(env: WorkerEnvironment) {
   if (!Number.isSafeInteger(intervalMs) || intervalMs < 30000 || intervalMs > 86400000) throw new Error("INVALID_COLLECTION_INTERVAL");
   const collectors = env.SBX_COLLECTORS.split(",").map(id => id.trim()).filter(Boolean);
   createCollectors(collectors);
-  const registry = parseRegistry(env.SBX_REGISTRY_JSON ? JSON.parse(env.SBX_REGISTRY_JSON) : defaultRegistry(network));
+  const registry = hostedRegistry(network, env.SBX_REGISTRY_JSON);
   const methodology = parseMethodology(env.SBX_METHODOLOGY_JSON ? JSON.parse(env.SBX_METHODOLOGY_JSON) : defaultMethodology());
   if (registry.network !== network) throw new Error("NETWORK_REGISTRY_MISMATCH");
   const peers: unknown = env.SBX_PEERS_JSON ? JSON.parse(env.SBX_PEERS_JSON) : [];

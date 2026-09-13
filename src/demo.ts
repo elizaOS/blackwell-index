@@ -58,7 +58,7 @@ export function latestDemoResponse(db:SqlDriver,registry:Registry,methodology:Me
 
 /** User-confirmed public demo approval, separate from oracle-network source admission. */
 export function demoRegistry(registry: Registry): Registry {
-  return {...registry,providers:registry.providers.map(p=>["oracle","azure","verda"].includes(p.id)?{...p,rights:{...p.rights,redistribute:true,derive:true,evidence:"Operator confirmed provider approval for public demo display and derivation on 2026-09-06"}}:p)};
+  return {...registry,providers:registry.providers.map(p=>["oracle","azure","verda","runpod","hyperstack","aws"].includes(p.id)?{...p,rights:{...p.rights,redistribute:true,derive:true,evidence:["runpod","hyperstack","aws"].includes(p.id)?"Operator confirmed provider permission for website demo collection, display and derivation on 2026-09-13":"Operator confirmed provider approval for public demo display and derivation on 2026-09-06"}}:p)};
 }
 
 export type DemoSnapshot = Snapshot & { mode: "CENTRALIZED_DEMO"; pythPublished: false };

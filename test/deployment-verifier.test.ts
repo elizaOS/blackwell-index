@@ -3,13 +3,14 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { validateDemo, verifyDeployment } from "../scripts/verify-deployment";
-import { defaultMethodology, defaultRegistry } from "../src/config";
+import { defaultMethodology } from "../src/config";
+import { hostedRegistry } from "../src/cloudflare/config";
 import { hash, nodeIdFor } from "../src/crypto";
 import { centralizedDemo, demoRegistry } from "../src/demo";
 import { MODELS, type Observation } from "../src/types";
 
 const NOW = 1788723000000, RELEASE = "a".repeat(40), PRIVATE = "private-body-must-not-be-reported";
-const registry = defaultRegistry("sbx-mainnet"), methodology = defaultMethodology();
+const registry = hostedRegistry("sbx-mainnet"), methodology = defaultMethodology();
 const unusedIdentity = { nodeId: "synthetic-unused", publicKey: "synthetic-unused", privateKeyPem: "synthetic-unused" };
 function observations(now: number): Observation[] {
   return MODELS.map((model, index) => ({ schemaVersion: 1, provider: "oracle", source: "oracle-public", sku: model, model, region: "us", procurement: "ON_DEMAND", priceBasis: "LIST", tenancy: "EXCLUSIVE", currency: "USD", unit: "USD_PER_GPU_HOUR", price: `${index + 1}.000000`, instancePrice: `${(index + 1) * 8}.000000`, gpuCount: 8, includes: [], availableGpuCount: null, observedAt: now - 1000, priceEffectiveAt: null, expiresAt: null, sourceUrl: "https://apexapps.oracle.com/prices", evidenceHash: "b".repeat(64) }));
@@ -137,6 +138,20 @@ for (const change of ["unavailable-value", "ready-null", "confidence", "kind", "
 });
 
 type Override = (url: URL, method: string, normal: Response) => Response | Promise<Response>;
+for (const codes of [["NO_DATA"], ["AUTH_FAILED"], ["NO_DATA", "HTTP_ERROR"], []]) test("partial catalog acceptance is limited to explicit NO_DATA: " + codes.join(","), async () => {
+  const fixture = deploymentFixture((url, _method, normal) => {
+    if (url.pathname !== "/v1/status") return normal;
+    return normal.json().then(value => {
+      const source = (value as { collection: { lastCycle: { sources: Array<Record<string, unknown>> } } }).collection.lastCycle.sources[0]!;
+      Object.assign(source, { status: "DEGRADED", errors: 3, errorCodes: codes });
+      return fixture.body(value);
+    });
+  });
+  const result = (await verifyDeployment(["--release", RELEASE], fixture.request))!;
+  expect(result.status).toBe(codes.length === 1 && codes[0] === "NO_DATA" ? "PASS" : "FAIL");
+  if (result.status === "PASS") expect((result.warnings as unknown[]).length).toBe(3);
+});
+
 function deploymentFixture(override: Override = (_url, _method, normal) => normal) {
   const requests: Array<{ url: string; method: string }> = [], now = Date.now();
   const value = demo(now), empty = { ...value, registryHash: hash(registry), methodologyHash: hash(methodology), feeds: value.feeds.map(feed => ({ ...feed, status: "UNAVAILABLE", price: null, confidence: null, observedAt: null })) };
